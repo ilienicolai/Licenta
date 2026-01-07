@@ -217,7 +217,7 @@ main(int argc, char** argv)
     // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
     // getchar();
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
         fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
         exit(1);
 	}

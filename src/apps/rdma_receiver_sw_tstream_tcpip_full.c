@@ -229,7 +229,7 @@ main(int argc, char** argv)
 
     printf("rdma_receiver_sw_stream_tcpiop_full 2: buffer addr: %d\n", config.rdma_ctx->buf);
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}
