@@ -138,6 +138,8 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     // TODO: This default is less than useful. It needs to be recomputed based on the provided values for message_count and message_size.
     config->buffer_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->buffer_size) = *(config->message_count) * *(config->message_size);
+    config->mem_offset = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
+    *(config->mem_offset) = 0;
 
     // parse arguments
     argp_parse(&argp, argc, argv, 0, 0, config);
@@ -193,12 +195,21 @@ main(int argc, char** argv)
         write(s, *local_receiver_rdma_metadata, 52);
     }
 
-    remote_sender_rdma_metadata = (char *)malloc(78);
-    memset(remote_sender_rdma_metadata, 0, 78);
+    if (config.function == RDMA_WRITE) {
+        remote_sender_rdma_metadata = (char *)malloc(78);
+        memset(remote_sender_rdma_metadata, 0, 78);
 
-    read(s, remote_sender_rdma_metadata, 78);
-    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
-    wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
+        read(s, remote_sender_rdma_metadata, 78);
+        sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
+        wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
+    } else {
+        remote_sender_rdma_metadata = (char *)malloc(78);
+        memset(remote_sender_rdma_metadata, 0, 78);
+
+        read(s, remote_sender_rdma_metadata, 78);
+        sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
+        wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
+    }
 
     fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: %s\n", remote_sender_rdma_metadata);
 

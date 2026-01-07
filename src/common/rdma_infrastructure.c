@@ -411,7 +411,10 @@ rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rd
                 IBV_QP_RQ_PSN             |
                 IBV_QP_MAX_DEST_RD_ATOMIC |
                 IBV_QP_MIN_RNR_TIMER)) {
-            fprintf(stderr, "rdma_connect_ctx: Failed to modify QP (#%d out of %d) to RTR\n", i + 1, count);
+            fprintf(stderr, "rdma_connect_ctx: Failed to modify QP (#%d out of %d) to RTR: %s (errno=%d)\n", i + 1, count, strerror(errno), errno);
+            fprintf(stderr, "  Remote: lid=0x%x qpn=0x%x psn=0x%x gid=%s\n", 
+                    (*(remote_endpoint + i))->lid, (*(remote_endpoint + i))->qpn, 
+                    (*(remote_endpoint + i))->psn, (*(remote_endpoint + i))->gid_string);
             return 1;
         } else {
             fprintf(stdout, "rdma_connect_ctx: QP (#%d out of %d) state set to RTR\n", i + 1, count);
@@ -434,7 +437,7 @@ rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rd
                     IBV_QP_RNR_RETRY          |
                     IBV_QP_SQ_PSN             |
                     IBV_QP_MAX_QP_RD_ATOMIC)) {
-                fprintf(stderr, "rdma_connect_ctx: Failed to modify QP (#%d out of %d) to RTS\n", i + 1, count);
+                fprintf(stderr, "rdma_connect_ctx: Failed to modify QP (#%d out of %d) to RTS: %s (errno=%d)\n", i + 1, count, strerror(errno), errno);
                 return 1;
             } else {
                 fprintf(stdout, "rdma_connect_ctx: QP (#%d out of %d) state set to RTS\n", i + 1, count);
