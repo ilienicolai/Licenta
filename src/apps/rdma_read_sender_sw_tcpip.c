@@ -199,14 +199,14 @@ main(int argc, char** argv)
         memset(remote_receiver_rdma_metadata, 0, 78);
 
         read(c, remote_receiver_rdma_metadata, 78);
-        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
+        sscanf(remote_receiver_rdma_metadata, "%04hx:%06x:%06x:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), (*(config.remote_endpoint))->gid_string);
         wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
     } else {
         remote_receiver_rdma_metadata = (char *)malloc(52);
         memset(remote_receiver_rdma_metadata, 0, 52);
 
         read(c, remote_receiver_rdma_metadata, 52);
-        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
+        sscanf(remote_receiver_rdma_metadata, "%04hx:%06x:%06x:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), (*(config.remote_endpoint))->gid_string);
         wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
     }
 
