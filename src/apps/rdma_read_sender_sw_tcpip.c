@@ -212,7 +212,7 @@ main(int argc, char** argv)
 
     fprintf(stdout, "(RDMA_SENDER) [FIRST] remote RDMA metadata: %s\n", remote_receiver_rdma_metadata);
 
-    write(c, *local_sender_rdma_metadata, 52);
+    write(c, *local_sender_rdma_metadata, 78);
 
     // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
     // getchar();
