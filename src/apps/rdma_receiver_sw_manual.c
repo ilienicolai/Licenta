@@ -160,7 +160,7 @@ main(int argc, char** argv)
     sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%s\n", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
     wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}

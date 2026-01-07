@@ -263,8 +263,8 @@ main(int argc, char** argv)
         *(clinet_connfd_list + crt_remote_count++) = c;
     }
 
-    if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
-        fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
+    if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
+        fprintf(stderr, "main: Failed to connect to remote RDMA endpoint.\n");
         exit(1);
     }
 
