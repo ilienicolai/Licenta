@@ -217,26 +217,22 @@ main(int argc, char** argv)
     // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
     // getchar();
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
         fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
         exit(1);
 	}
 
     char buf[32];
     write(c, "GO", 32);
-    // do {
-    //     bzero(buf, 32);
-    //     read(c, buf, 32);
-    // } while (strcmp(buf, "GO") != 0);
-
-    // // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-    // if (rdma_post_send_mt(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-    //     fprintf(stderr, "main: Failed to post writes.\n");
-    //     exit(1);
-    // }
-
-    // char buf[32];
-    // write(c, "DONE", 32);
+    
+    // Wait for receiver to complete RDMA READ operations
+    fprintf(stdout, "(RDMA_SENDER) Waiting for receiver to complete RDMA READ operations...\n");
+    do {
+        bzero(buf, 32);
+        read(c, buf, 32);
+    } while (strcmp(buf, "DONE") != 0);
+    
+    fprintf(stdout, "(RDMA_SENDER) Receiver completed RDMA READ operations.\n");
 
 	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");

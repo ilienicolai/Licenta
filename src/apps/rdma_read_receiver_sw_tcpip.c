@@ -138,6 +138,8 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     // TODO: This default is less than useful. It needs to be recomputed based on the provided values for message_count and message_size.
     config->buffer_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->buffer_size) = *(config->message_count) * *(config->message_size);
+    config->mem_offset = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
+    *(config->mem_offset) = 0;
 
     // parse arguments
     argp_parse(&argp, argc, argv, 0, 0, config);
@@ -205,7 +207,7 @@ main(int argc, char** argv)
     // fprintf(stdout, "(RDMA_RECEIVER) [FOURTH-bis] [Wait a little and then press ENTER to check the received data... (BEFORE changing the QP state)]\n");
     // getchar();
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}
@@ -220,6 +222,8 @@ main(int argc, char** argv)
         bzero(buf, 32);
         read(s, buf, 32);
     } while (strcmp(buf, "GO") != 0);
+
+    fprintf(stdout, "(RDMA_RECEIVER) Starting RDMA READ operations...\n");
 
     // Print data in the reserved memory at the end of the write
     // int i, j;
@@ -239,6 +243,8 @@ main(int argc, char** argv)
         fprintf(stderr, "main: Failed to post writes.\n");
         exit(1);
     }
+
+    fprintf(stdout, "(RDMA_RECEIVER) RDMA READ operations posted.\n");
 
     write(s, "DONE", 32);
 

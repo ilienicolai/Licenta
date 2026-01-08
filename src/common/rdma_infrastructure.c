@@ -101,7 +101,7 @@ rdma_prepare(struct rdma_config *config, int role)
         return NULL;
     }
 
-    config->rdma_ctx = rdma_init_ctx(config->ib_dev, config->message_count, config->message_size, config->buffer_size, config->remote_count, 1, role);
+    config->rdma_ctx = rdma_init_ctx(config->ib_dev, config->message_count, config->message_size, config->buffer_size, config->remote_count, 1, role, config->function);
     if (!config->rdma_ctx) {
         fprintf(stderr, "rdma_prepare: Failed to create RDMA context\n");
         return NULL;
@@ -164,10 +164,16 @@ rdma_prepare(struct rdma_config *config, int role)
 }
 
 struct rdma_context *
-rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned count, int port, int role)
+rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned count, int port, int role, int function)
 {
     struct rdma_context *ctx;
     int access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE;
+    
+    // Add REMOTE_READ flag if using RDMA READ operations
+    if (function == RDMA_READ) {
+        access_flags |= IBV_ACCESS_REMOTE_READ;
+    }
+    
     int i, j;
     
     ctx = (struct rdma_context *)calloc(1, sizeof(*ctx));
@@ -309,7 +315,7 @@ rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned 
                 .qp_state        = IBV_QPS_INIT,
                 .pkey_index      = 0,
                 .port_num        = port,
-                .qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE
+                .qp_access_flags = access_flags
             };
             
             if (ibv_modify_qp(*(ctx->qp + i), &attr,
@@ -369,7 +375,7 @@ rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned 
 }
 
 int
-rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rdma_endpoint **local_endpoint, struct rdma_endpoint **remote_endpoint, unsigned count, int sgid_idx, int role)
+rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rdma_endpoint **local_endpoint, struct rdma_endpoint **remote_endpoint, unsigned count, int sgid_idx, int role, int function)
 {
     int i;
 
@@ -411,7 +417,9 @@ rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rd
             fprintf(stdout, "rdma_connect_ctx: QP (#%d out of %d) state set to RTR\n", i + 1, count);
         }
 
-        if (role == RDMA_SENDER) {
+        // For RDMA WRITE, only sender goes to RTS
+        // For RDMA READ, both sender and receiver go to RTS (receiver initiates reads)
+        if (role == RDMA_SENDER || (role == RDMA_RECEIVER && function == RDMA_READ)) {
             attr.qp_state       = IBV_QPS_RTS;
             attr.timeout        = 16;
             attr.retry_cnt      = 7;
