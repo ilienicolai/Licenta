@@ -2,14 +2,19 @@
 
 
 struct rdma_config config;
+unsigned int backpressure_threshold_up = 90;
+unsigned int backpressure_threshold_down = 75;
 
 /* Options. */
 static struct argp_option options[] = {
+    {"worker-count", 'w', "WORKERS", 0, "Number of worker threads used for reading incoming data"},
     {"ib-device", 'd', "IBDEV", 0, "IB device (e.g. mlx5_0)"},
     {"ib-gid-index", 'i', "IBGIDX", 0, "IB GID index (e.g. 5)"},
     {"message-count", 'M', "MCOUNT", 0, "RDMA message count to be received"},
     {"message-size", 'S', "MSIZE", 0, "RDMA message size to be received"},
     {"buffer-size", 'B', "BSIZE", 0, "Size of the memory buffer which will store the received RDMA messages"},
+    {"backpressure-threshold-up", 's', "UPTHR", 0, "Threshold(%)) of buffer being in use for enabling backpresure"},
+    {"backpressure-threshold-down", 'j', "DOWNTHR", 0, "Threshold(%)) of buffer being in use for disabling backpresure"},
     { 0 }
 };
 
@@ -23,6 +28,13 @@ parse_opt(int key, char *arg, struct argp_state *state)
     char* end;
 
     switch (key) {
+    case 'w':
+        cfg->worker_count = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
     case 'd':
         cfg->ib_devname = strdup(arg);
         break;
@@ -50,6 +62,20 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'B':
         *(cfg->buffer_size) = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
+    case 's':
+        backpressure_threshold_up = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
+    case 'j':
+        backpressure_threshold_down = strtol(arg, &end, 0);
         if (end == arg) {
             argp_error(state, "'%s' is not a number", arg);
         }
@@ -120,6 +146,7 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     config->remote_hostname = "";
     config->remote_port = 53100;
 
+    config->worker_count = 1;
     config->ib_devname = "mlx5_0";
     config->gidx = 5;
     config->mtu = IBV_MTU_1024;
@@ -212,8 +239,6 @@ main(int argc, char** argv)
         exit(1);
 	}
 
-    // write(s, "GO", 32);
-
     // fprintf(stdout, "(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data... (AFTER changing the QP state)]\n");
     // getchar();
 
@@ -223,28 +248,15 @@ main(int argc, char** argv)
         read(s, buf, 32);
     } while (strcmp(buf, "GO") != 0);
 
-    fprintf(stdout, "(RDMA_RECEIVER) Starting RDMA READ operations...\n");
+    fprintf(stdout, "(RDMA_RECEIVER) Starting RDMA READ operations with consumption and backpressure control...\n");
 
-    // Print data in the reserved memory at the end of the write
-    // int i, j;
-
-    // printf("SUBSCRIBER: Buffer data:\n");
-    // // i = config.message_count - 1;
-    // for (i = 0; i < *(config.message_count); i++) {
-    //     for (j = 0; j < *(config.message_size); j++) {
-    //         printf("%d:", *(*(config.rdma_ctx->buf) + i * *(config.message_size) + j));
-    //     }
-    // }
-    // printf("\nDONE\n");
-    // End of data check
-
-    // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-    if (rdma_read_stream_method(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-        fprintf(stderr, "main: Failed to post writes.\n");
+    // Use the new rdma_read_consume function
+    if (rdma_read_consume(s, backpressure_threshold_up, backpressure_threshold_down, config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.buffer_size, config.mem_offset, config.worker_count) < 0) {
+        fprintf(stderr, "main: Failed to perform RDMA READ operations with consumption.\n");
         exit(1);
     }
 
-    fprintf(stdout, "(RDMA_RECEIVER) RDMA READ operations posted.\n");
+    fprintf(stdout, "(RDMA_RECEIVER) RDMA READ operations completed.\n");
 
     write(s, "DONE", 32);
 

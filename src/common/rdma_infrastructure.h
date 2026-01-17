@@ -176,6 +176,7 @@ int rdma_consume_tstream(int control_socket, unsigned int backpressure_threshold
 
 int rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count);
 int rdma_read_stream_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count);
+int rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, unsigned int backpressure_threshold_down, struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned worker_count);
 
 
 #endif /* RDMA_INFRASTRUCTURE_H */
