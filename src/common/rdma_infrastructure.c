@@ -1803,13 +1803,185 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
     struct ibv_send_wr *wr, **bad_wr;
     struct ibv_sge *list;
 
-    int i, j, k, l, total, full_queue_count, remainder_queue_size, done, last, left, ne;
+    int i, j, l, total, full_queue_count, remainder_queue_size, done, last, left, ne;
     struct ibv_wc wc[RDMA_MAX_SEND_WR];
 
-    for (k = 0; k < count; k++) {
-        full_queue_count = *(message_count + k) / RDMA_MAX_SEND_WR;
-        remainder_queue_size = *(message_count + k) % RDMA_MAX_SEND_WR;
+    full_queue_count = *(message_count) / RDMA_MAX_SEND_WR;
+    remainder_queue_size = *(message_count) % RDMA_MAX_SEND_WR;
 
+    total = 0;
+    
+    // Process full batches
+    for (j = 0; j < full_queue_count; j++) {
+        wr = (struct ibv_send_wr *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr));
+        bad_wr = (struct ibv_send_wr **)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr *));
+        list = (struct ibv_sge *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_sge));
+
+        done = 0;
+        last = 0;
+        while (!done) {
+            for (i = last; i < RDMA_MAX_SEND_WR; i++) {
+                *(bad_wr + i) = NULL;
+                memset(wr + i, 0, sizeof(struct ibv_send_wr));
+                memset(list + i, 0, sizeof(struct ibv_sge));
+
+                (wr + i)->wr_id = (j * RDMA_MAX_SEND_WR + i);
+                
+                // RDMA READ: Cannot chain work requests - must be NULL
+                (wr + i)->next = NULL;
+                
+                // RDMA READ opcode
+                (wr + i)->opcode = IBV_WR_RDMA_READ;
+                (wr + i)->sg_list = list + i;
+                (wr + i)->num_sge = 1;
+
+                // RDMA READ: Must signal every completion
+                (wr + i)->send_flags = IBV_SEND_SIGNALED;
+                
+                // Remote address: where to READ FROM
+                (wr + i)->wr.rdma.remote_addr = (*remote_endpoint)->addr + *mem_offset + (j * RDMA_MAX_SEND_WR + i) * *message_size;
+                (wr + i)->wr.rdma.rkey = (*remote_endpoint)->rkey;
+
+                // Local buffer: where to WRITE TO
+                (list + i)->length = *message_size;
+                (list + i)->addr = (uint64_t)(*ctx->buf + (j * RDMA_MAX_SEND_WR + i) * *message_size);
+                (list + i)->lkey = (*ctx->mr)->lkey;
+
+                // RDMA READ: Must post individually (cannot chain)
+                if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
+                    fprintf(stderr, "rdma_read_method: Couldn't post read #%d\n", i);
+                    break;
+                } else {
+                    total++;
+                }
+            }
+
+            debug_print("(client %d, loop %d) posted %d reads\n", 1, j, i);
+            if (i < RDMA_MAX_SEND_WR) {
+                debug_print("(client %d, loop %d) missing %d reads\n", 1, j, RDMA_MAX_SEND_WR - i);
+                done = 0;
+                last = i;
+            } else {
+                debug_print("(client %d, loop %d) all reads posted\n", 1, j);
+                done = 1;
+            }
+
+            // Poll for completions
+            left = i;  // Number of reads actually posted
+            do {
+                ne = ibv_poll_cq(*ctx->cq, left, wc);
+                if (ne < 0) {
+                    debug_print("(client %d, loop %d) poll CQ failed %d\n", 1, j, ne);
+                } else {
+                    left -= ne;
+                    debug_print("(client %d, loop %d) ne=%d, left=%d\n", 1, j, ne, left);
+                }
+            } while (left > 0);
+            debug_print("(client %d, loop %d) all completions received\n", 1, j);
+        }
+
+        free(wr);
+        free(bad_wr);
+        free(list);
+    }
+
+    // Process remainder batch
+    if (remainder_queue_size > 0) {
+        wr = (struct ibv_send_wr *)malloc(remainder_queue_size * sizeof(struct ibv_send_wr));
+        bad_wr = (struct ibv_send_wr **)malloc(remainder_queue_size * sizeof(struct ibv_send_wr *));
+        list = (struct ibv_sge *)malloc(remainder_queue_size * sizeof(struct ibv_sge));
+
+        done = 0;
+        last = 0;
+        while (!done) {
+            for (i = last; i < remainder_queue_size; i++) {
+                *(bad_wr + i) = NULL;
+                memset(wr + i, 0, sizeof(struct ibv_send_wr));
+                memset(list + i, 0, sizeof(struct ibv_sge));
+
+                (wr + i)->wr_id = (j * RDMA_MAX_SEND_WR + i);
+                
+                // RDMA READ: Cannot chain work requests - must be NULL
+                (wr + i)->next = NULL;
+                
+                // RDMA READ opcode
+                (wr + i)->opcode = IBV_WR_RDMA_READ;
+                (wr + i)->sg_list = list + i;
+                (wr + i)->num_sge = 1;
+
+                // RDMA READ: Must signal every completion
+                (wr + i)->send_flags = IBV_SEND_SIGNALED;
+                
+                // Remote address: where to READ FROM
+                (wr + i)->wr.rdma.remote_addr = (*remote_endpoint)->addr + *mem_offset + (j * RDMA_MAX_SEND_WR + i) * *message_size;
+                (wr + i)->wr.rdma.rkey = (*remote_endpoint)->rkey;
+
+                // Local buffer: where to WRITE TO
+                (list + i)->length = *message_size;
+                (list + i)->addr = (uint64_t)(*ctx->buf + (j * RDMA_MAX_SEND_WR + i) * *message_size);
+                (list + i)->lkey = (*ctx->mr)->lkey;
+
+                // RDMA READ: Must post individually (cannot chain)
+                if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
+                    fprintf(stderr, "rdma_read_method: Couldn't post read #%d\n", i);
+                    break;
+                } else {
+                    total++;
+                }
+            }
+
+            debug_print("(client %d, final loop) posted %d reads\n", 1, i);
+            if (i < remainder_queue_size) {
+                debug_print("(client %d, final loop) missing %d reads\n", 1, remainder_queue_size - i);
+                done = 0;
+                last = i;
+            } else {
+                debug_print("(client %d, final loop) all reads posted\n", 1);
+                done = 1;
+            }
+
+            // Poll for completions
+            left = i;  // Number of reads actually posted
+            do {
+                ne = ibv_poll_cq(*ctx->cq, left, wc);
+                if (ne < 0) {
+                    debug_print("(client %d, final loop) poll CQ failed %d\n", 1, ne);
+                } else {
+                    for (l = 0; l < ne; l++) {
+                        if ((wc + l)->status != IBV_WC_SUCCESS) {
+                            debug_print("(RDMA_READ) ibv_poll_cq failed status %s (%d) for wr_id %d\n", 
+                                        ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
+                        } else {
+                            debug_print("(RDMA_READ) ibv_poll_cq success status for wr_id %d\n", (int)((wc + l)->wr_id));
+                        }
+                    }
+                    left -= ne;
+                    debug_print("(client %d, final loop) ne=%d, left=%d\n", 1, ne, left);
+                }
+            } while (left > 0);
+            debug_print("(client %d, final loop) all completions received\n", 1);
+        }
+
+            free(wr);
+            free(bad_wr);
+            free(list);
+        }
+
+    return 0;
+}
+
+int
+rdma_read_stream_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count)
+{
+    struct ibv_send_wr *wr, **bad_wr;
+    struct ibv_sge *list;
+
+    int i, j, l, total, full_queue_count, remainder_queue_size, done, last, left, ne;
+    struct ibv_wc wc[RDMA_MAX_SEND_WR];
+
+    full_queue_count = *(message_count) / RDMA_MAX_SEND_WR;
+    remainder_queue_size = *(message_count) % RDMA_MAX_SEND_WR;
+    while (1) {
         total = 0;
         
         // Process full batches
@@ -1840,16 +2012,16 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
                     (wr + i)->send_flags = IBV_SEND_SIGNALED;
                     
                     // Remote address: where to READ FROM
-                    (wr + i)->wr.rdma.remote_addr = (*(remote_endpoint + k))->addr + *(mem_offset + k) + (j * RDMA_MAX_SEND_WR + i) * *(message_size + k);
-                    (wr + i)->wr.rdma.rkey = (*(remote_endpoint + k))->rkey;
+                    (wr + i)->wr.rdma.remote_addr = (*remote_endpoint)->addr + *mem_offset + (j * RDMA_MAX_SEND_WR + i) * *message_size;
+                    (wr + i)->wr.rdma.rkey = (*remote_endpoint)->rkey;
 
                     // Local buffer: where to WRITE TO
-                    (list + i)->length = *(message_size + k);
-                    (list + i)->addr = (uint64_t)(*(ctx->buf + k) + (j * RDMA_MAX_SEND_WR + i) * *(message_size + k));
-                    (list + i)->lkey = (*(ctx->mr + k))->lkey;
+                    (list + i)->length = *message_size;
+                    (list + i)->addr = (uint64_t)(*ctx->buf + (j * RDMA_MAX_SEND_WR + i) * *message_size);
+                    (list + i)->lkey = (*ctx->mr)->lkey;
 
                     // RDMA READ: Must post individually (cannot chain)
-                    if (ibv_post_send(*(ctx->qp + k), wr + i, bad_wr + i)) {
+                    if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
                         fprintf(stderr, "rdma_read_method: Couldn't post read #%d\n", i);
                         break;
                     } else {
@@ -1857,28 +2029,28 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
                     }
                 }
 
-                debug_print("(client %d, loop %d) posted %d reads\n", k + 1, j, i);
+                debug_print("(client %d, loop %d) posted %d reads\n", 1, j, i);
                 if (i < RDMA_MAX_SEND_WR) {
-                    debug_print("(client %d, loop %d) missing %d reads\n", k + 1, j, RDMA_MAX_SEND_WR - i);
+                    debug_print("(client %d, loop %d) missing %d reads\n", 1, j, RDMA_MAX_SEND_WR - i);
                     done = 0;
                     last = i;
                 } else {
-                    debug_print("(client %d, loop %d) all reads posted\n", k + 1, j);
+                    debug_print("(client %d, loop %d) all reads posted\n", 1, j);
                     done = 1;
                 }
 
                 // Poll for completions
                 left = i;  // Number of reads actually posted
                 do {
-                    ne = ibv_poll_cq(*(ctx->cq + k), left, wc);
+                    ne = ibv_poll_cq(*ctx->cq, left, wc);
                     if (ne < 0) {
-                        debug_print("(client %d, loop %d) poll CQ failed %d\n", k + 1, j, ne);
+                        debug_print("(client %d, loop %d) poll CQ failed %d\n", 1, j, ne);
                     } else {
                         left -= ne;
-                        debug_print("(client %d, loop %d) ne=%d, left=%d\n", k + 1, j, ne, left);
+                        debug_print("(client %d, loop %d) ne=%d, left=%d\n", 1, j, ne, left);
                     }
                 } while (left > 0);
-                debug_print("(client %d, loop %d) all completions received\n", k + 1, j);
+                debug_print("(client %d, loop %d) all completions received\n", 1, j);
             }
 
             free(wr);
@@ -1914,16 +2086,16 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
                     (wr + i)->send_flags = IBV_SEND_SIGNALED;
                     
                     // Remote address: where to READ FROM
-                    (wr + i)->wr.rdma.remote_addr = (*(remote_endpoint + k))->addr + *(mem_offset + k) + (j * RDMA_MAX_SEND_WR + i) * *(message_size + k);
-                    (wr + i)->wr.rdma.rkey = (*(remote_endpoint + k))->rkey;
+                    (wr + i)->wr.rdma.remote_addr = (*remote_endpoint)->addr + *mem_offset + (j * RDMA_MAX_SEND_WR + i) * *message_size;
+                    (wr + i)->wr.rdma.rkey = (*remote_endpoint)->rkey;
 
                     // Local buffer: where to WRITE TO
-                    (list + i)->length = *(message_size + k);
-                    (list + i)->addr = (uint64_t)(*(ctx->buf + k) + (j * RDMA_MAX_SEND_WR + i) * *(message_size + k));
-                    (list + i)->lkey = (*(ctx->mr + k))->lkey;
+                    (list + i)->length = *message_size;
+                    (list + i)->addr = (uint64_t)(*ctx->buf + (j * RDMA_MAX_SEND_WR + i) * *message_size);
+                    (list + i)->lkey = (*ctx->mr)->lkey;
 
                     // RDMA READ: Must post individually (cannot chain)
-                    if (ibv_post_send(*(ctx->qp + k), wr + i, bad_wr + i)) {
+                    if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
                         fprintf(stderr, "rdma_read_method: Couldn't post read #%d\n", i);
                         break;
                     } else {
@@ -1931,42 +2103,43 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
                     }
                 }
 
-                debug_print("(client %d, final loop) posted %d reads\n", k + 1, i);
+                debug_print("(client %d, final loop) posted %d reads\n", 1, i);
                 if (i < remainder_queue_size) {
-                    debug_print("(client %d, final loop) missing %d reads\n", k + 1, remainder_queue_size - i);
+                    debug_print("(client %d, final loop) missing %d reads\n", 1, remainder_queue_size - i);
                     done = 0;
                     last = i;
                 } else {
-                    debug_print("(client %d, final loop) all reads posted\n", k + 1);
+                    debug_print("(client %d, final loop) all reads posted\n", 1);
                     done = 1;
                 }
 
                 // Poll for completions
                 left = i;  // Number of reads actually posted
                 do {
-                    ne = ibv_poll_cq(*(ctx->cq + k), left, wc);
+                    ne = ibv_poll_cq(*ctx->cq, left, wc);
                     if (ne < 0) {
-                        debug_print("(client %d, final loop) poll CQ failed %d\n", k + 1, ne);
+                        debug_print("(client %d, final loop) poll CQ failed %d\n", 1, ne);
                     } else {
                         for (l = 0; l < ne; l++) {
                             if ((wc + l)->status != IBV_WC_SUCCESS) {
                                 debug_print("(RDMA_READ) ibv_poll_cq failed status %s (%d) for wr_id %d\n", 
-                                          ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
+                                            ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
                             } else {
                                 debug_print("(RDMA_READ) ibv_poll_cq success status for wr_id %d\n", (int)((wc + l)->wr_id));
                             }
                         }
                         left -= ne;
-                        debug_print("(client %d, final loop) ne=%d, left=%d\n", k + 1, ne, left);
+                        debug_print("(client %d, final loop) ne=%d, left=%d\n", 1, ne, left);
                     }
                 } while (left > 0);
-                debug_print("(client %d, final loop) all completions received\n", k + 1);
+                debug_print("(client %d, final loop) all completions received\n", 1);
             }
 
             free(wr);
             free(bad_wr);
             free(list);
         }
+        sleep(5);
     }
 
     return 0;
