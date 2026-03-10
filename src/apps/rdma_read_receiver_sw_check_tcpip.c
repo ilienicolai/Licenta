@@ -223,28 +223,15 @@ main(int argc, char** argv)
         read(s, buf, 32);
     } while (strcmp(buf, "GO") != 0);
 
-    fprintf(stdout, "(RDMA_RECEIVER) Starting RDMA READ operations...\n");
-
-    // Print data in the reserved memory at the end of the write
-    // int i, j;
-
-    // printf("SUBSCRIBER: Buffer data:\n");
-    // // i = config.message_count - 1;
-    // for (i = 0; i < *(config.message_count); i++) {
-    //     for (j = 0; j < *(config.message_size); j++) {
-    //         printf("%d:", *(*(config.rdma_ctx->buf) + i * *(config.message_size) + j));
-    //     }
-    // }
-    // printf("\nDONE\n");
-    // End of data check
+    fprintf(stdout, "(RDMA_RECEIVER_CHECK) Starting integrity-checked RDMA READ operations...\n");
 
     // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-    if (rdma_read_method_check(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-        fprintf(stderr, "main: Failed to post writes.\n");
+    if (rdma_read_method_check(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count, s) < 0) {
+        fprintf(stderr, "main: RDMA READ integrity check failed (hash mismatch detected).\n");
         exit(1);
     }
 
-    fprintf(stdout, "(RDMA_RECEIVER) RDMA READ operations posted.\n");
+    fprintf(stdout, "(RDMA_RECEIVER_CHECK) RDMA READ operations completed and verified.\n");
 
     write(s, "DONE", 32);
 
