@@ -216,8 +216,32 @@ rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned 
 
     for (i = 0; i < count; i++) {
         if (role == RDMA_SENDER) {
+            const char *lorem[] = {
+                "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ",
+                "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ",
+                "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris. ",
+                "Duis aute irure dolor in reprehenderit in voluptate velit esse. ",
+                "Excepteur sint occaecat cupidatat non proident, sunt in culpa. ",
+                "Curabitur pretium tincidunt lacus sed auctor cursus nisl nunc. ",
+                "Nulla facilisi etiam dignissim diam quis enim lobortis scelerisque. ",
+                "Viverra accumsan in nisl nisi scelerisque eu ultrices vitae auctor. ",
+                "Pellentesque habitant morbi tristique senectus et netus et malesuada. ",
+                "Faucibus pulvinar elementum integer enim neque volutpat ac tincidunt. ",
+            };
+            int lorem_count = sizeof(lorem) / sizeof(lorem[0]);
             for (j = 0; j < *(message_count + i); j++) {
-                memset(*(ctx->buf + i) + j * *(message_size + i), j+43+i*(*(message_count + i)), *(message_size + i));
+                char *dst = *(ctx->buf + i) + j * *(message_size + i);
+                unsigned long msize = *(message_size + i);
+                unsigned long offset = 0;
+                memset(dst, 0, msize);
+                while (offset < msize - 1) {
+                    const char *phrase = lorem[(j + offset / 64) % lorem_count];
+                    unsigned long plen = strlen(phrase);
+                    unsigned long to_copy = (plen < msize - 1 - offset) ? plen : msize - 1 - offset;
+                    memcpy(dst + offset, phrase, to_copy);
+                    offset += to_copy;
+                }
+                dst[msize - 1] = '\0';
             }
         } else {
             memset(*(ctx->buf + i), 0x7b, *(ctx->size + i));
