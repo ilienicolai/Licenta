@@ -1880,6 +1880,19 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
             debug_print("(client %d, loop %d) all completions received\n", 1, j);
         }
 
+        // Print received data for this batch
+        fprintf(stdout, "=== BATCH %d: %d messages of %lu bytes (offset %lu) ===\n", 
+                j, RDMA_MAX_SEND_WR, *message_size, (unsigned long)(j * RDMA_MAX_SEND_WR) * *message_size);
+        for (i = 0; i < RDMA_MAX_SEND_WR; i++) {
+            unsigned long msg_offset = (j * RDMA_MAX_SEND_WR + i) * *message_size;
+            char *data = (char *)(*ctx->buf + msg_offset);
+            fprintf(stdout, "[msg %d] ", j * RDMA_MAX_SEND_WR + i);
+            fwrite(data, 1, *message_size, stdout);
+            fprintf(stdout, "\n");
+        }
+        fprintf(stdout, "=== END BATCH %d ===\n\n", j);
+        fflush(stdout);
+
         free(wr);
         free(bad_wr);
         free(list);
@@ -1961,6 +1974,19 @@ rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoin
             } while (left > 0);
             debug_print("(client %d, final loop) all completions received\n", 1);
         }
+
+            // Print received data for remainder batch
+            fprintf(stdout, "=== REMAINDER BATCH: %d messages of %lu bytes (offset %lu) ===\n", 
+                    remainder_queue_size, *message_size, (unsigned long)(full_queue_count * RDMA_MAX_SEND_WR) * *message_size);
+            for (i = 0; i < remainder_queue_size; i++) {
+                unsigned long msg_offset = (full_queue_count * RDMA_MAX_SEND_WR + i) * *message_size;
+                char *data = (char *)(*ctx->buf + msg_offset);
+                fprintf(stdout, "[msg %d] ", full_queue_count * RDMA_MAX_SEND_WR + i);
+                fwrite(data, 1, *message_size, stdout);
+                fprintf(stdout, "\n");
+            }
+            fprintf(stdout, "=== END REMAINDER BATCH ===\n\n");
+            fflush(stdout);
 
             free(wr);
             free(bad_wr);
