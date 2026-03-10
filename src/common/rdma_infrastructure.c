@@ -2177,120 +2177,120 @@ rdma_read_producer_thread(void *arg)
         
         // Process full batches
         for (j = 0; j < full_queue_count; j++) {
-        // Check backpressure before posting new batch
-        pthread_mutex_lock(&(thread_args->cond_lock));
-        used_size = thread_args->used_size;
-        
-        // Wait if buffer is too full
-        while (used_size >= (thread_args->buffer_size * thread_args->backpressure_threshold_up / 100)) {
-            if (!paused) {
-                fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
-                        used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
-                thread_args->backpressure = 1;
-                paused = 1;
-            }
-            pthread_mutex_unlock(&(thread_args->cond_lock));
-            usleep(10000); // Sleep 10ms before checking again
+            // Check backpressure before posting new batch
             pthread_mutex_lock(&(thread_args->cond_lock));
             used_size = thread_args->used_size;
             
-            // Check if we can resume
-            if (used_size < (thread_args->buffer_size * thread_args->backpressure_threshold_down / 100)) {
-                fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
-                        used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
-                thread_args->backpressure = 0;
-                paused = 0;
-                break;
-            }
-        }
-        pthread_mutex_unlock(&(thread_args->cond_lock));
-
-        wr = (struct ibv_send_wr *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr));
-        bad_wr = (struct ibv_send_wr **)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr *));
-        list = (struct ibv_sge *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_sge));
-
-        done = 0;
-        last = 0;
-        while (!done) {
-            for (i = last; i < RDMA_MAX_SEND_WR; i++) {
-                unsigned long read_idx = j * RDMA_MAX_SEND_WR + i;
-                unsigned long buffer_offset = (thread_args->mem_offset_produce + i * thread_args->message_size) % thread_args->buffer_size;
-
-                *(bad_wr + i) = NULL;
-                memset(wr + i, 0, sizeof(struct ibv_send_wr));
-                memset(list + i, 0, sizeof(struct ibv_sge));
-
-                (wr + i)->wr_id = read_idx;
-                (wr + i)->next = NULL;
-                (wr + i)->opcode = IBV_WR_RDMA_READ;
-                (wr + i)->sg_list = list + i;
-                (wr + i)->num_sge = 1;
-                (wr + i)->send_flags = IBV_SEND_SIGNALED;
+            // Wait if buffer is too full
+            while (used_size >= (thread_args->buffer_size * thread_args->backpressure_threshold_up / 100)) {
+                if (!paused) {
+                    fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
+                            used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
+                    thread_args->backpressure = 1;
+                    paused = 1;
+                }
+                pthread_mutex_unlock(&(thread_args->cond_lock));
+                usleep(10000); // Sleep 10ms before checking again
+                pthread_mutex_lock(&(thread_args->cond_lock));
+                used_size = thread_args->used_size;
                 
-                // Remote address: where to READ FROM
-                (wr + i)->wr.rdma.remote_addr = remote_endpoint->addr + thread_args->mem_offset + read_idx * thread_args->message_size;
-                (wr + i)->wr.rdma.rkey = remote_endpoint->rkey;
-
-                // Local buffer: where to WRITE TO (circular buffer)
-                (list + i)->length = thread_args->message_size;
-                (list + i)->addr = (uint64_t)(*ctx->buf + buffer_offset);
-                (list + i)->lkey = (*ctx->mr)->lkey;
-
-                if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
-                    fprintf(stderr, "(RDMA_READ_PRODUCER) Couldn't post read #%d\n", i);
+                // Check if we can resume
+                if (used_size < (thread_args->buffer_size * thread_args->backpressure_threshold_down / 100)) {
+                    fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
+                            used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
+                    thread_args->backpressure = 0;
+                    paused = 0;
                     break;
-                } else {
-                    total++;
                 }
             }
+            pthread_mutex_unlock(&(thread_args->cond_lock));
 
-            debug_print("(RDMA_READ_PRODUCER, batch %d) posted %d reads\n", j, i);
+            wr = (struct ibv_send_wr *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr));
+            bad_wr = (struct ibv_send_wr **)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_send_wr *));
+            list = (struct ibv_sge *)malloc(RDMA_MAX_SEND_WR * sizeof(struct ibv_sge));
 
-            if (i < RDMA_MAX_SEND_WR) {
-                debug_print("(RDMA_READ_PRODUCER, batch %d) missing %d reads\n", j, RDMA_MAX_SEND_WR - i);
-                done = 0;
-                last = i;
-            } else {
-                done = 1;
-            }
+            done = 0;
+            last = 0;
+            while (!done) {
+                for (i = last; i < RDMA_MAX_SEND_WR; i++) {
+                    unsigned long read_idx = j * RDMA_MAX_SEND_WR + i;
+                    unsigned long buffer_offset = (thread_args->mem_offset_produce + i * thread_args->message_size) % thread_args->buffer_size;
 
-            // Poll for completions
-            left = i;
-            do {
-                ne = ibv_poll_cq(*ctx->cq, left, wc);
-                if (ne < 0) {
-                    fprintf(stderr, "(RDMA_READ_PRODUCER, batch %d) poll CQ failed %d\n", j, ne);
-                } else {
-                    for (l = 0; l < ne; l++) {
-                        if ((wc + l)->status != IBV_WC_SUCCESS) {
-                            fprintf(stderr, "(RDMA_READ_PRODUCER) Read failed: %s (%d) for wr_id %d\n", 
-                                    ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
-                        } else {
-                            debug_print("(RDMA_READ_PRODUCER) Read completed for wr_id %d\n", (int)((wc + l)->wr_id));
-                            
-                            // Update buffer tracking
-                            pthread_mutex_lock(&(thread_args->cond_lock));
-                            thread_args->received_size_fifo[thread_args->tail] = thread_args->message_size;
-                            thread_args->tail++;
-                            if (thread_args->tail >= RECEIVED_FIFO_SIZE) {
-                                thread_args->tail = 0;
-                            }
-                            thread_args->mem_offset_produce = (thread_args->mem_offset_produce + thread_args->message_size) % thread_args->buffer_size;
-                            thread_args->used_size += thread_args->message_size;
-                            reads_completed++;
-                            pthread_cond_signal(&(thread_args->start_work));
-                            pthread_mutex_unlock(&(thread_args->cond_lock));
-                        }
+                    *(bad_wr + i) = NULL;
+                    memset(wr + i, 0, sizeof(struct ibv_send_wr));
+                    memset(list + i, 0, sizeof(struct ibv_sge));
+
+                    (wr + i)->wr_id = read_idx;
+                    (wr + i)->next = NULL;
+                    (wr + i)->opcode = IBV_WR_RDMA_READ;
+                    (wr + i)->sg_list = list + i;
+                    (wr + i)->num_sge = 1;
+                    (wr + i)->send_flags = IBV_SEND_SIGNALED;
+                    
+                    // Remote address: where to READ FROM
+                    (wr + i)->wr.rdma.remote_addr = remote_endpoint->addr + thread_args->mem_offset + read_idx * thread_args->message_size;
+                    (wr + i)->wr.rdma.rkey = remote_endpoint->rkey;
+
+                    // Local buffer: where to WRITE TO (circular buffer)
+                    (list + i)->length = thread_args->message_size;
+                    (list + i)->addr = (uint64_t)(*ctx->buf + buffer_offset);
+                    (list + i)->lkey = (*ctx->mr)->lkey;
+
+                    if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
+                        fprintf(stderr, "(RDMA_READ_PRODUCER) Couldn't post read #%d\n", i);
+                        break;
+                    } else {
+                        total++;
                     }
-                    left -= ne;
                 }
-            } while (left > 0);
-        }
 
-        free(wr);
-        free(bad_wr);
-        free(list);
-    }
+                debug_print("(RDMA_READ_PRODUCER, batch %d) posted %d reads\n", j, i);
+
+                if (i < RDMA_MAX_SEND_WR) {
+                    debug_print("(RDMA_READ_PRODUCER, batch %d) missing %d reads\n", j, RDMA_MAX_SEND_WR - i);
+                    done = 0;
+                    last = i;
+                } else {
+                    done = 1;
+                }
+
+                // Poll for completions
+                left = i;
+                do {
+                    ne = ibv_poll_cq(*ctx->cq, left, wc);
+                    if (ne < 0) {
+                        fprintf(stderr, "(RDMA_READ_PRODUCER, batch %d) poll CQ failed %d\n", j, ne);
+                    } else {
+                        for (l = 0; l < ne; l++) {
+                            if ((wc + l)->status != IBV_WC_SUCCESS) {
+                                fprintf(stderr, "(RDMA_READ_PRODUCER) Read failed: %s (%d) for wr_id %d\n", 
+                                        ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
+                            } else {
+                                debug_print("(RDMA_READ_PRODUCER) Read completed for wr_id %d\n", (int)((wc + l)->wr_id));
+                                
+                                // Update buffer tracking
+                                pthread_mutex_lock(&(thread_args->cond_lock));
+                                thread_args->received_size_fifo[thread_args->tail] = thread_args->message_size;
+                                thread_args->tail++;
+                                if (thread_args->tail >= RECEIVED_FIFO_SIZE) {
+                                    thread_args->tail = 0;
+                                }
+                                thread_args->mem_offset_produce = (thread_args->mem_offset_produce + thread_args->message_size) % thread_args->buffer_size;
+                                thread_args->used_size += thread_args->message_size;
+                                reads_completed++;
+                                pthread_cond_signal(&(thread_args->start_work));
+                                pthread_mutex_unlock(&(thread_args->cond_lock));
+                            }
+                        }
+                        left -= ne;
+                    }
+                } while (left > 0);
+            }
+
+            free(wr);
+            free(bad_wr);
+            free(list);
+        }
 
     // Process remainder batch
     if (remainder_queue_size > 0) {
