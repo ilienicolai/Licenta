@@ -1014,6 +1014,95 @@ rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_e
     return hash_mismatches > 0 ? -1 : 0;
 }
 
+/* Consumer thread for rdma_read_consume_check.
+ * Identical to rdma_read_consumer_thread except it waits on
+ * used_size == 0 instead of produce == consume.  This is necessary
+ * because after a full cycle the produce pointer wraps back to exactly
+ * equal the consume pointer, making the produce==consume test
+ * ambiguous (empty vs. full circle), which deadlocks the original
+ * consumer.  used_size is never ambiguous. */
+void *
+rdma_read_consume_check_consumer_thread(void *arg)
+{
+    char *devnull;
+    unsigned long chunk_size, work_size, work_start_offset, work_end_offset;
+    unsigned long new_mem_offset_circular;
+    long int timestamp_ns;
+    unsigned local_worker_id;
+
+    struct rdma_thread_param *thread_args = (struct rdma_thread_param *)arg;
+
+    pthread_mutex_lock(&(thread_args->cond_lock));
+    local_worker_id = thread_args->worker_id++;
+    pthread_mutex_unlock(&(thread_args->cond_lock));
+
+    devnull = (char *)malloc(thread_args->message_count * thread_args->message_size);
+    bzero(devnull, thread_args->message_count * thread_args->message_size);
+
+    while (1) {
+        timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+
+        pthread_mutex_lock(&(thread_args->cond_lock));
+        /* Wait on used_size == 0, NOT on produce == consume.
+         * With a circular buffer whose size equals exactly one cycle's
+         * worth of data, produce wraps to == consume after every cycle
+         * even when the buffer is NOT empty. used_size has no such
+         * ambiguity. */
+        while (thread_args->used_size == 0 && thread_args->got_data != READY) {
+            pthread_cond_wait(&(thread_args->start_work), &(thread_args->cond_lock));
+        }
+
+        if (thread_args->got_data == READY && thread_args->used_size == 0) {
+            pthread_mutex_unlock(&(thread_args->cond_lock));
+            break;
+        }
+
+        chunk_size = thread_args->received_size_fifo[thread_args->head];
+        new_mem_offset_circular = (thread_args->mem_offset_consume + chunk_size) % thread_args->buffer_size;
+        pthread_mutex_unlock(&(thread_args->cond_lock));
+
+        work_size = chunk_size / thread_args->worker_count;
+        work_start_offset = local_worker_id * work_size;
+        work_end_offset = (local_worker_id + 1) * work_size;
+        if (local_worker_id == thread_args->worker_count - 1) {
+            if (work_end_offset < chunk_size) {
+                work_end_offset = chunk_size;
+                work_size = work_end_offset - work_start_offset;
+            }
+        }
+
+        memcpy(devnull, (*thread_args->rdma_ctx->buf) + thread_args->mem_offset_consume + work_start_offset, work_size);
+
+        pthread_barrier_wait(&(thread_args->workers_done_barrier));
+
+        if (local_worker_id == 0) {
+            unsigned long used_size;
+
+            thread_args->head++;
+            if (thread_args->head >= RECEIVED_FIFO_SIZE) {
+                thread_args->head = 0;
+            }
+
+            pthread_mutex_lock(&(thread_args->cond_lock));
+            thread_args->mem_offset_consume = new_mem_offset_circular;
+            thread_args->used_size -= chunk_size;
+            if (thread_args->mem_offset_produce >= thread_args->mem_offset_consume) {
+                used_size = thread_args->mem_offset_produce - thread_args->mem_offset_consume;
+            } else {
+                used_size = thread_args->buffer_size + thread_args->mem_offset_produce - thread_args->mem_offset_consume;
+            }
+            pthread_mutex_unlock(&(thread_args->cond_lock));
+
+            printf("(RDMA_READ_CONSUME_CHECK_CONSUMER) timestamp=%ld ms, used_size=%lu bytes (%.1f%%)\n",
+                   (timestamp_ns / 1000000), used_size, (100.0 * used_size / thread_args->buffer_size));
+        }
+    }
+
+    free(devnull);
+    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK_CONSUMER) Worker %u finished\n", local_worker_id);
+    return NULL;
+}
+
 /* Producer thread for rdma_read_consume_check:
  * Combines the circular-buffer / backpressure streaming loop from
  * rdma_read_producer_thread with per-batch CRC32 integrity checking
@@ -1150,7 +1239,7 @@ rdma_read_consume_check_producer_thread(void *arg)
                 done = (i >= batch_size) ? 1 : 0;
                 if (!done) last = i;
 
-            /* ---- Step 3: poll completions, update circular buffer per-completion ---- */
+            /* ---- Step 3: poll completions (no consumer signaling yet) ---- */
                 left = i;
                 do {
                     ne = ibv_poll_cq(*ctx->cq, left, wc);
@@ -1167,24 +1256,6 @@ rdma_read_consume_check_producer_thread(void *arg)
                             } else {
                                 debug_print("(RDMA_READ_CONSUME_CHECK) Read completed "
                                             "for wr_id %d\n", (int)((wc + l)->wr_id));
-                                /* Update circular buffer tracking immediately per
-                                 * completion, same as rdma_read_producer_thread.
-                                 * This prevents the produce pointer from wrapping
-                                 * back to equal consume pointer while used_size > 0,
-                                 * which would deadlock the consumer. */
-                                pthread_mutex_lock(&(thread_args->cond_lock));
-                                thread_args->received_size_fifo[thread_args->tail] =
-                                    thread_args->message_size;
-                                thread_args->tail++;
-                                if (thread_args->tail >= RECEIVED_FIFO_SIZE)
-                                    thread_args->tail = 0;
-                                thread_args->mem_offset_produce =
-                                    (thread_args->mem_offset_produce +
-                                     thread_args->message_size) %
-                                    thread_args->buffer_size;
-                                thread_args->used_size += thread_args->message_size;
-                                pthread_cond_signal(&(thread_args->start_work));
-                                pthread_mutex_unlock(&(thread_args->cond_lock));
                             }
                         }
                         left -= ne;
@@ -1215,6 +1286,26 @@ rdma_read_consume_check_producer_thread(void *arg)
                             cycle, j, batch_errors);
                 }
             }
+
+            /* ---- Step 5: now that CRC is verified, update circular buffer
+             * tracking and signal the consumer.  Doing this AFTER the CRC
+             * check guarantees the data region is stable during hashing.
+             * The consumer uses used_size == 0 as its wait condition (not
+             * produce == consume), so the wrap-around ambiguity cannot
+             * cause a deadlock here. ---- */
+            pthread_mutex_lock(&(thread_args->cond_lock));
+            for (i = 0; i < batch_size; i++) {
+                thread_args->received_size_fifo[thread_args->tail] = thread_args->message_size;
+                thread_args->tail++;
+                if (thread_args->tail >= RECEIVED_FIFO_SIZE)
+                    thread_args->tail = 0;
+                thread_args->mem_offset_produce = (thread_args->mem_offset_produce +
+                                                   thread_args->message_size) %
+                                                  thread_args->buffer_size;
+                thread_args->used_size += thread_args->message_size;
+                pthread_cond_signal(&(thread_args->start_work));
+            }
+            pthread_mutex_unlock(&(thread_args->cond_lock));
 
             free(wr);
             free(bad_wr);
@@ -1286,9 +1377,10 @@ rdma_read_consume_check(int control_socket,
     fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure thresholds: up=%u%%, down=%u%%\n",
             backpressure_threshold_up, backpressure_threshold_down);
 
-    /* Start consumer worker threads */
+    /* Start consumer worker threads (use the check-specific consumer
+     * which waits on used_size == 0 instead of produce == consume) */
     for (int i = 0; i < (int)worker_count; i++) {
-        if (pthread_create(&(worker_threads[i]), NULL, rdma_read_consumer_thread,
+        if (pthread_create(&(worker_threads[i]), NULL, rdma_read_consume_check_consumer_thread,
                            thread_args) != 0) {
             fprintf(stderr, "(RDMA_READ_CONSUME_CHECK) pthread_create() error - "
                     "worker_threads[%d]\n", i);
