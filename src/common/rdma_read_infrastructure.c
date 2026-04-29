@@ -1150,7 +1150,7 @@ rdma_read_consume_check_producer_thread(void *arg)
                 done = (i >= batch_size) ? 1 : 0;
                 if (!done) last = i;
 
-                /* ---- Step 3: poll completions ---- */
+            /* ---- Step 3: poll completions, update circular buffer per-completion ---- */
                 left = i;
                 do {
                     ne = ibv_poll_cq(*ctx->cq, left, wc);
@@ -1167,6 +1167,24 @@ rdma_read_consume_check_producer_thread(void *arg)
                             } else {
                                 debug_print("(RDMA_READ_CONSUME_CHECK) Read completed "
                                             "for wr_id %d\n", (int)((wc + l)->wr_id));
+                                /* Update circular buffer tracking immediately per
+                                 * completion, same as rdma_read_producer_thread.
+                                 * This prevents the produce pointer from wrapping
+                                 * back to equal consume pointer while used_size > 0,
+                                 * which would deadlock the consumer. */
+                                pthread_mutex_lock(&(thread_args->cond_lock));
+                                thread_args->received_size_fifo[thread_args->tail] =
+                                    thread_args->message_size;
+                                thread_args->tail++;
+                                if (thread_args->tail >= RECEIVED_FIFO_SIZE)
+                                    thread_args->tail = 0;
+                                thread_args->mem_offset_produce =
+                                    (thread_args->mem_offset_produce +
+                                     thread_args->message_size) %
+                                    thread_args->buffer_size;
+                                thread_args->used_size += thread_args->message_size;
+                                pthread_cond_signal(&(thread_args->start_work));
+                                pthread_mutex_unlock(&(thread_args->cond_lock));
                             }
                         }
                         left -= ne;
@@ -1197,21 +1215,6 @@ rdma_read_consume_check_producer_thread(void *arg)
                             cycle, j, batch_errors);
                 }
             }
-
-            /* ---- Step 5: update circular buffer tracking, signal consumers ---- */
-            pthread_mutex_lock(&(thread_args->cond_lock));
-            for (i = 0; i < batch_size; i++) {
-                thread_args->received_size_fifo[thread_args->tail] = thread_args->message_size;
-                thread_args->tail++;
-                if (thread_args->tail >= RECEIVED_FIFO_SIZE)
-                    thread_args->tail = 0;
-                thread_args->mem_offset_produce = (thread_args->mem_offset_produce +
-                                                   thread_args->message_size) %
-                                                  thread_args->buffer_size;
-                thread_args->used_size += thread_args->message_size;
-                pthread_cond_signal(&(thread_args->start_work));
-            }
-            pthread_mutex_unlock(&(thread_args->cond_lock));
 
             free(wr);
             free(bad_wr);
