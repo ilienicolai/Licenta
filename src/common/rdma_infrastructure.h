@@ -163,6 +163,10 @@ int rdma_get_port_info(struct ibv_context *context, int port, struct ibv_port_at
 void wire_gid_to_gid(const char *wgid, union ibv_gid *gid);
 void gid_to_wire_gid(const union ibv_gid *gid, char wgid[]);
 
+void set_timerfd(int fd, unsigned s, unsigned ns);
+long int get_current_timestamp_ns(void);
+long int get_current_timestamp_ns_thread_cpu(void);
+
 char ** rdma_prepare(struct rdma_config *config, int role);
 struct rdma_context * rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned count, int port, int role, int function);
 int rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rdma_endpoint **local_endpoint, struct rdma_endpoint **remote_endpoint, unsigned count, int sgid_idx, int role, int function);
