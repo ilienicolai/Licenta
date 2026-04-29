@@ -2586,3 +2586,203 @@ rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, un
 
     return 0;
 }
+
+/*
+ * Simple CRC32 implementation (IEEE 802.3 polynomial).
+ * Used for data integrity checking over RDMA READ transfers.
+ */
+static uint32_t crc32_table[256];
+static int crc32_table_initialized = 0;
+
+static void
+crc32_init_table(void)
+{
+    uint32_t i, j, crc;
+    for (i = 0; i < 256; i++) {
+        crc = i;
+        for (j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc = crc >> 1;
+        }
+        crc32_table[i] = crc;
+    }
+    crc32_table_initialized = 1;
+}
+
+uint32_t
+rdma_crc32(const void *data, size_t length)
+{
+    const unsigned char *buf = (const unsigned char *)data;
+    uint32_t crc = 0xFFFFFFFF;
+    size_t i;
+
+    if (!crc32_table_initialized)
+        crc32_init_table();
+
+    for (i = 0; i < length; i++) {
+        crc = (crc >> 8) ^ crc32_table[(crc ^ buf[i]) & 0xFF];
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+int
+rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count, int control_socket)
+{
+    struct ibv_send_wr *wr, **bad_wr;
+    struct ibv_sge *list;
+
+    int i, j, l, total, full_queue_count, remainder_queue_size, done, last, left, ne;
+    int batch_size, batch_errors;
+    struct ibv_wc wc[RDMA_MAX_SEND_WR];
+    uint32_t remote_hash, local_hash;
+    int total_batches;
+    int hash_mismatches = 0;
+
+    full_queue_count = *(message_count) / RDMA_MAX_SEND_WR;
+    remainder_queue_size = *(message_count) % RDMA_MAX_SEND_WR;
+    total_batches = full_queue_count + (remainder_queue_size > 0 ? 1 : 0);
+
+    total = 0;
+    
+    fprintf(stdout, "(RDMA_READ_CHECK) Starting integrity-checked RDMA READ: %lu messages, %lu bytes each, %d batches\n",
+            *message_count, *message_size, total_batches);
+
+    // Process all batches (full + remainder)
+    for (j = 0; j < total_batches; j++) {
+        // Determine batch size: full batch or remainder
+        if (j < full_queue_count) {
+            batch_size = RDMA_MAX_SEND_WR;
+        } else {
+            batch_size = remainder_queue_size;
+        }
+
+        // Step 1: Request hash from sender over TCP
+        //   Send: "HASH:<batch_index>:<batch_offset>:<batch_data_length>"
+        //   The sender will compute CRC32 over that region and send back the 4-byte hash
+        {
+            unsigned long batch_offset = *mem_offset + (unsigned long)j * RDMA_MAX_SEND_WR * *message_size;
+            unsigned long batch_data_len = (unsigned long)batch_size * *message_size;
+            char hash_req[128];
+
+            snprintf(hash_req, sizeof(hash_req), "HASH:%d:%lu:%lu", j, batch_offset, batch_data_len);
+            write(control_socket, hash_req, sizeof(hash_req));
+            debug_print("(RDMA_READ_CHECK) Sent hash request for batch %d: offset=%lu, len=%lu\n", j, batch_offset, batch_data_len);
+
+            // Receive the 4-byte CRC32 hash from sender
+            memset(&remote_hash, 0, sizeof(remote_hash));
+            read(control_socket, &remote_hash, sizeof(remote_hash));
+            debug_print("(RDMA_READ_CHECK) Received remote hash for batch %d: 0x%08x\n", j, remote_hash);
+        }
+
+        // Step 2: Post RDMA READ work requests for this batch
+        wr = (struct ibv_send_wr *)malloc(batch_size * sizeof(struct ibv_send_wr));
+        bad_wr = (struct ibv_send_wr **)malloc(batch_size * sizeof(struct ibv_send_wr *));
+        list = (struct ibv_sge *)malloc(batch_size * sizeof(struct ibv_sge));
+
+        done = 0;
+        last = 0;
+        batch_errors = 0;
+        while (!done) {
+            for (i = last; i < batch_size; i++) {
+                *(bad_wr + i) = NULL;
+                memset(wr + i, 0, sizeof(struct ibv_send_wr));
+                memset(list + i, 0, sizeof(struct ibv_sge));
+
+                (wr + i)->wr_id = (j * RDMA_MAX_SEND_WR + i);
+                
+                // RDMA READ: Cannot chain work requests - must be NULL
+                (wr + i)->next = NULL;
+                
+                // RDMA READ opcode
+                (wr + i)->opcode = IBV_WR_RDMA_READ;
+                (wr + i)->sg_list = list + i;
+                (wr + i)->num_sge = 1;
+
+                // RDMA READ: Must signal every completion
+                (wr + i)->send_flags = IBV_SEND_SIGNALED;
+                
+                // Remote address: where to READ FROM
+                (wr + i)->wr.rdma.remote_addr = (*remote_endpoint)->addr + *mem_offset + (j * RDMA_MAX_SEND_WR + i) * *message_size;
+                (wr + i)->wr.rdma.rkey = (*remote_endpoint)->rkey;
+
+                // Local buffer: where to WRITE TO
+                (list + i)->length = *message_size;
+                (list + i)->addr = (uint64_t)(*ctx->buf + (j * RDMA_MAX_SEND_WR + i) * *message_size);
+                (list + i)->lkey = (*ctx->mr)->lkey;
+
+                // RDMA READ: Must post individually (cannot chain)
+                if (ibv_post_send(*ctx->qp, wr + i, bad_wr + i)) {
+                    fprintf(stderr, "rdma_read_method_check: Couldn't post read #%d\n", i);
+                    break;
+                } else {
+                    total++;
+                }
+            }
+
+            debug_print("(RDMA_READ_CHECK) (batch %d) posted %d reads\n", j, i);
+            if (i < batch_size) {
+                debug_print("(RDMA_READ_CHECK) (batch %d) missing %d reads\n", j, batch_size - i);
+                done = 0;
+                last = i;
+            } else {
+                debug_print("(RDMA_READ_CHECK) (batch %d) all reads posted\n", j);
+                done = 1;
+            }
+
+            // Step 3: Poll for completions
+            left = i;  // Number of reads actually posted
+            do {
+                ne = ibv_poll_cq(*ctx->cq, left, wc);
+                if (ne < 0) {
+                    debug_print("(RDMA_READ_CHECK) (batch %d) poll CQ failed %d\n", j, ne);
+                } else {
+                    for (l = 0; l < ne; l++) {
+                        if ((wc + l)->status != IBV_WC_SUCCESS) {
+                            fprintf(stderr, "(RDMA_READ_CHECK) ibv_poll_cq failed status %s (%d) for wr_id %d\n", 
+                                    ibv_wc_status_str((wc + l)->status), (wc + l)->status, (int)((wc + l)->wr_id));
+                            batch_errors++;
+                        } else {
+                            debug_print("(RDMA_READ_CHECK) ibv_poll_cq success for wr_id %d\n", (int)((wc + l)->wr_id));
+                        }
+                    }
+                    left -= ne;
+                    debug_print("(RDMA_READ_CHECK) (batch %d) ne=%d, left=%d\n", j, ne, left);
+                }
+            } while (left > 0);
+            debug_print("(RDMA_READ_CHECK) (batch %d) all completions received\n", j);
+        }
+
+        // Step 4: Compute local CRC32 over the received data and compare
+        if (batch_errors == 0) {
+            unsigned long local_offset = (unsigned long)j * RDMA_MAX_SEND_WR * *message_size;
+            unsigned long batch_data_len = (unsigned long)batch_size * *message_size;
+
+            local_hash = rdma_crc32(*ctx->buf + local_offset, batch_data_len);
+
+            if (local_hash == remote_hash) {
+                fprintf(stdout, "(RDMA_READ_CHECK) Batch %d/%d: CRC32 OK (0x%08x), %d messages verified\n",
+                        j + 1, total_batches, local_hash, batch_size);
+            } else {
+                fprintf(stderr, "(RDMA_READ_CHECK) Batch %d/%d: CRC32 MISMATCH! remote=0x%08x local=0x%08x, %d messages\n",
+                        j + 1, total_batches, remote_hash, local_hash, batch_size);
+                hash_mismatches++;
+            }
+        } else {
+            fprintf(stderr, "(RDMA_READ_CHECK) Batch %d/%d: SKIPPING hash check due to %d WC errors\n",
+                    j + 1, total_batches, batch_errors);
+            hash_mismatches++;
+        }
+
+        free(wr);
+        free(bad_wr);
+        free(list);
+    }
+
+    fprintf(stdout, "(RDMA_READ_CHECK) All operations completed: %d total reads, %d/%d batches passed integrity check\n",
+            total, total_batches - hash_mismatches, total_batches);
+
+    return hash_mismatches > 0 ? -1 : 0;
+}
+
