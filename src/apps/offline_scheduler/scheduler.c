@@ -52,7 +52,7 @@ static long long hungarian_solve(int n, int cost[][MAX_NODES], int assign[])
         exit(EXIT_FAILURE);
     }
 
-    /* minv[j]  = minimum (cost[cur_row][j] - u[cur_row] - v[j]) seen so far */
+    /* minv[j]  = minimum (cost[cur_row][j] - u[cur_row] - v[j])*/
     long long *minv = malloc((n + 1) * sizeof(long long));
     int       *used = malloc((n + 1) * sizeof(int));
     if (!minv || !used) {
