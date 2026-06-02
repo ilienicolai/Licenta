@@ -70,10 +70,14 @@ parse_opt(int key, char *arg, struct argp_state *state)
         case 0: // <local-ip-address>
             cfg->local_hostname = strdup(arg);
             break;
-        case 1: { // <coord-port>
+    case 1: { // <scheduler-ip>
+            cfg->remote_hostname = strdup(arg);
+            break;
+        }
+        case 2: { // <scheduler-port>
             long p = strtol(arg, &end, 0);
             if (end == arg) argp_error(state, "'%s' is not a number", arg);
-            cfg->local_port = (int)p;
+            cfg->remote_port = (int)p;
             break;
         }
         default:
@@ -83,7 +87,7 @@ parse_opt(int key, char *arg, struct argp_state *state)
         break;
 
     case ARGP_KEY_END:
-        if (state->arg_num != 2) argp_usage(state);
+        if (state->arg_num != 3) argp_usage(state);
         break;
 
     default:
@@ -94,7 +98,7 @@ parse_opt(int key, char *arg, struct argp_state *state)
 }
 
 /* A description of the arguments we accept. */
-static char args_doc[] = "<local-ip-address> <coord-port>";
+static char args_doc[] = "<local-ip-address> <scheduler-ip> <scheduler-port>";
 
 /* Program documentation. */
 static char doc[] = "RDMA receiver (scheduled): waits for scheduler assignment then performs RDMA READ";
@@ -116,9 +120,9 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     config->function = RDMA_READ;
 
     config->local_hostname = "";
-    config->local_port = 53100;   /* overridden by <coord-port> CLI arg */
-    config->remote_hostname = "";
-    config->remote_port = 0;
+    config->local_port = 0;
+    config->remote_hostname = "";  /* overridden by <scheduler-ip> CLI arg  */
+    config->remote_port = 52000;   /* overridden by <scheduler-port> CLI arg */
 
     config->worker_count = 1;
     config->ib_devname = "mlx5_0";
@@ -154,41 +158,41 @@ main(int argc, char** argv)
     cli_parse(argc, argv, &config);
 
     /* ------------------------------------------------------------------ *
-     * Phase 1: Wait for the scheduler to deliver the assignment.          *
-     *          Listen on <coord-port> for a                               *
-     *          "CONNECT_TO <sender_ip> <rdma_port>\n" message.            *
+     * Phase 1: Connect to the scheduler to receive the assignment.        *
+     *          Connect to <scheduler-ip>:<scheduler-port>, send           *
+     *          "RECEIVER <local-ip>\n", receive                           *
+     *          "CONNECT_TO <sender_ip> <rdma_port>\n".                   *
      * ------------------------------------------------------------------ */
     {
         int flag = 1;
-        int sched_srv = socket(AF_INET, SOCK_STREAM, 0);
-        if (sched_srv < 0) { perror("socket"); exit(1); }
-
-        setsockopt(sched_srv, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+        int sched_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sched_fd < 0) { perror("socket"); exit(1); }
+        setsockopt(sched_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
         struct sockaddr_in sa;
         bzero(&sa, sizeof(sa));
         sa.sin_family      = AF_INET;
-        sa.sin_addr.s_addr = inet_addr(config.local_hostname);
-        sa.sin_port        = htons(config.local_port);
+        sa.sin_addr.s_addr = inet_addr(config.remote_hostname);
+        sa.sin_port        = htons(config.remote_port);
 
-        if (bind(sched_srv, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
-            fprintf(stderr, "main: bind on coord port %d failed.\n", config.local_port);
+        fprintf(stdout, "(RECEIVER) Connecting to scheduler at %s:%d ...\n",
+                config.remote_hostname, config.remote_port);
+
+        if (connect(sched_fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
+            fprintf(stderr, "main: cannot connect to scheduler – %m\n");
             exit(1);
         }
-        if (listen(sched_srv, 1) != 0) {
-            fprintf(stderr, "main: listen on coord port failed.\n");
-            exit(1);
-        }
 
-        fprintf(stdout, "(RECEIVER) Waiting for scheduler assignment on %s:%d ...\n",
-                config.local_hostname, config.local_port);
+        /* identify ourselves */
+        char ident[128];
+        snprintf(ident, sizeof(ident), "RECEIVER %s\n", config.local_hostname);
+        write(sched_fd, ident, strlen(ident));
 
-        int sched_conn = accept(sched_srv, NULL, NULL);
-        if (sched_conn < 0) { perror("accept"); exit(1); }
-
+        /* receive assignment */
         char msg[128];
         memset(msg, 0, sizeof(msg));
-        read(sched_conn, msg, sizeof(msg) - 1);
+        read(sched_fd, msg, sizeof(msg) - 1);
+        close(sched_fd);
 
         char sender_ip[64];
         int  rdma_port;
@@ -197,10 +201,7 @@ main(int argc, char** argv)
             exit(1);
         }
 
-        close(sched_conn);
-        close(sched_srv);
-
-        /* store the assigned sender address in config */
+        /* store the assigned sender address – overwrite remote_* with RDMA peer */
         config.remote_hostname = strdup(sender_ip);
         config.remote_port     = rdma_port;
 
