@@ -17,8 +17,53 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "utils.h"
+
+#define RDMA_PORT_OFFSET 1000   /* rdma_handshake_port = coord_port + RDMA_PORT_OFFSET */
+
+/*
+ * connect_and_send
+ *
+ * Opens a TCP connection to ip:port, sends the NUL-terminated message,
+ * then closes the connection.  Returns 0 on success, -1 on error.
+ */
+static int connect_and_send(const char *ip, uint16_t port, const char *msg)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { perror("socket"); return -1; }
+
+    int flag = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+    struct sockaddr_in addr;
+    bzero(&addr, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = inet_addr(ip);
+    addr.sin_port        = htons(port);
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        fprintf(stderr, "connect_and_send: cannot connect to %s:%u – %m\n", ip, port);
+        close(fd);
+        return -1;
+    }
+
+    /* send the full message including the trailing '\n' */
+    size_t len = strlen(msg);
+    if (write(fd, msg, len) != (ssize_t)len) {
+        fprintf(stderr, "connect_and_send: write failed\n");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    return 0;
+}
 
 
 // Hungarian algorithm – minimisation, square n×n cost matrix        *
@@ -210,7 +255,50 @@ int main(int argc, char *argv[])
     printf("Matched pairs              : %d\n", matched);
     (void)total;   /* suppress unused-variable warning */
 
+    /* --- distribute assignments to hosts --- */
+    printf("\n=== Distributing assignments to hosts ===\n");
+
+    int dist_ok = 1;
+
+    for (int i = 0; i < nc; i++) {
+        int j = assign[i];
+        if (j >= ns) continue;                   /* unmatched client – skip */
+        if (g.cost[i][j] == INF) continue;       /* forced / no real edge   */
+
+        uint16_t rdma_port = g.servers[j].port + RDMA_PORT_OFFSET;
+
+        /* --- tell the sender (server j) to listen on rdma_port --- */
+        char ready_msg[64];
+        snprintf(ready_msg, sizeof(ready_msg), "READY %u\n", rdma_port);
+
+        printf("  -> Sender %-6s (%s:%u)  :  %s",
+               g.servers[j].name, g.servers[j].ip, g.servers[j].port, ready_msg);
+
+        if (connect_and_send(g.servers[j].ip, g.servers[j].port, ready_msg) != 0) {
+            fprintf(stderr, "  ERROR: could not notify sender %s\n", g.servers[j].name);
+            dist_ok = 0;
+        }
+
+        /* --- tell the receiver (client i) where to connect --- */
+        char conn_msg[128];
+        snprintf(conn_msg, sizeof(conn_msg), "CONNECT_TO %s %u\n",
+                 g.servers[j].ip, rdma_port);
+
+        printf("  -> Receiver %-6s (%s:%u)  :  %s",
+               g.clients[i].name, g.clients[i].ip, g.clients[i].port, conn_msg);
+
+        if (connect_and_send(g.clients[i].ip, g.clients[i].port, conn_msg) != 0) {
+            fprintf(stderr, "  ERROR: could not notify receiver %s\n", g.clients[i].name);
+            dist_ok = 0;
+        }
+    }
+
+    if (dist_ok)
+        printf("\nAll hosts notified successfully.\n");
+    else
+        fprintf(stderr, "\nSome notifications failed – check host availability.\n");
+
     free(sq);
     free(assign);
-    return EXIT_SUCCESS;
+    return dist_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
