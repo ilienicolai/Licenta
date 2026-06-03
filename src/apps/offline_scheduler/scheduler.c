@@ -262,7 +262,6 @@ int main(int argc, char *argv[])
 
     int dist_ok = 1;
 
-    /* Step 1: notify all senders (scheduler connects TO them – same machine) */
     for (int i = 0; i < nc; i++) {
         int j = assign[i];
         if (j >= ns) continue;
@@ -270,130 +269,35 @@ int main(int argc, char *argv[])
 
         uint16_t rdma_port = g.servers[j].port + RDMA_PORT_OFFSET;
 
+        /* --- tell the sender to listen on rdma_port --- */
         char ready_msg[64];
         snprintf(ready_msg, sizeof(ready_msg), "READY %u\n", rdma_port);
-
         printf("  -> Sender %-6s (%s:%u)  :  %s",
                g.servers[j].name, g.servers[j].ip, g.servers[j].port, ready_msg);
-
         if (connect_and_send(g.servers[j].ip, g.servers[j].port, ready_msg) != 0) {
             fprintf(stderr, "  ERROR: could not notify sender %s\n", g.servers[j].name);
+            dist_ok = 0;
+            continue;
+        }
+
+        /* --- tell the receiver where to connect --- */
+        char conn_msg[128];
+        snprintf(conn_msg, sizeof(conn_msg), "CONNECT_TO %s %u\n",
+                 g.servers[j].ip, rdma_port);
+        printf("  -> Receiver %-6s (%s:%u)  :  %s",
+               g.clients[i].name, g.clients[i].ip, g.clients[i].port, conn_msg);
+        if (connect_and_send(g.clients[i].ip, g.clients[i].port, conn_msg) != 0) {
+            fprintf(stderr, "  ERROR: could not notify receiver %s\n", g.clients[i].name);
             dist_ok = 0;
         }
     }
 
-    if (!dist_ok) {
-        fprintf(stderr, "Failed to notify all senders – aborting.\n");
-        free(sq); free(assign);
-        return EXIT_FAILURE;
-    }
-
-    /* Step 2: receivers connect TO the scheduler to pick up their assignment.
-     *
-     * Build a lookup table: client_ip -> CONNECT_TO message.
-     * Then listen on scheduler_port and serve each incoming receiver connection.
-     */
-    const uint16_t SCHEDULER_PORT = scheduler_port;
-
-    /* build assignment messages indexed by client */
-    char conn_msg[MAX_NODES][128];
-    int  has_assignment[MAX_NODES];
-    memset(has_assignment, 0, sizeof(has_assignment));
-
-    for (int i = 0; i < nc; i++) {
-        int j = assign[i];
-        if (j >= ns || g.cost[i][j] == INF) continue;
-        uint16_t rdma_port = g.servers[j].port + RDMA_PORT_OFFSET;
-        snprintf(conn_msg[i], sizeof(conn_msg[i]),
-                 "CONNECT_TO %s %u\n", g.servers[j].ip, rdma_port);
-        has_assignment[i] = 1;
-    }
-
-    /* count how many receivers we expect */
-    int receivers_expected = 0;
-    for (int i = 0; i < nc; i++)
-        if (has_assignment[i]) receivers_expected++;
-
-    /* listen for receiver connections */
-    int flag = 1;
-    int sched_srv = socket(AF_INET, SOCK_STREAM, 0);
-    if (sched_srv < 0) { perror("socket"); free(sq); free(assign); return EXIT_FAILURE; }
-    setsockopt(sched_srv, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
-
-    struct sockaddr_in sa;
-    bzero(&sa, sizeof(sa));
-    sa.sin_family      = AF_INET;
-    sa.sin_addr.s_addr = INADDR_ANY;
-    sa.sin_port        = htons(SCHEDULER_PORT);
-
-    if (bind(sched_srv, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
-        perror("bind scheduler port");
-        free(sq); free(assign);
-        return EXIT_FAILURE;
-    }
-    if (listen(sched_srv, receivers_expected + 1) != 0) {
-        perror("listen scheduler port");
-        free(sq); free(assign);
-        return EXIT_FAILURE;
-    }
-
-    printf("\nWaiting for %d receiver(s) to connect on port %u...\n",
-           receivers_expected, SCHEDULER_PORT);
-
-    int notified = 0;
-    while (notified < receivers_expected) {
-        struct sockaddr_in cin;
-        socklen_t clen = sizeof(cin);
-        int conn = accept(sched_srv, (struct sockaddr *)&cin, &clen);
-        if (conn < 0) { perror("accept"); continue; }
-
-        /* receiver sends: "RECEIVER <local_ip>\n" */
-        char buf[128];
-        memset(buf, 0, sizeof(buf));
-        read(conn, buf, sizeof(buf) - 1);
-
-        char recv_ip[64];
-        int  recv_port;
-        if (sscanf(buf, "RECEIVER %63s %d", recv_ip, &recv_port) != 2) {
-            fprintf(stderr, "  Unexpected message from receiver: '%s'\n", buf);
-            close(conn);
-            continue;
-        }
-
-        /* find matching client by IP and port */
-        int ci = -1;
-        for (int i = 0; i < nc; i++) {
-            if (has_assignment[i] &&
-                strcmp(g.clients[i].ip, recv_ip) == 0 &&
-                g.clients[i].port == (uint16_t)recv_port) {
-                ci = i;
-                break;
-            }
-        }
-
-        if (ci == -1) {
-            fprintf(stderr, "  No assignment for receiver IP %s\n", recv_ip);
-            write(conn, "ERROR\n", 6);
-            close(conn);
-            continue;
-        }
-
-        printf("  -> Receiver %-6s (%s:%d)  :  %s",
-               g.clients[ci].name, recv_ip, recv_port, conn_msg[ci]);
-
-        size_t len = strlen(conn_msg[ci]);
-        write(conn, conn_msg[ci], len);
-        close(conn);
-
-        has_assignment[ci] = 0;   /* mark as served */
-        notified++;
-    }
-
-    close(sched_srv);
-
-    printf("\nAll hosts notified successfully.\n");
+    if (dist_ok)
+        printf("\nAll hosts notified successfully.\n");
+    else
+        fprintf(stderr, "\nSome notifications failed – check host availability.\n");
 
     free(sq);
     free(assign);
-    return EXIT_SUCCESS;
+    return dist_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
