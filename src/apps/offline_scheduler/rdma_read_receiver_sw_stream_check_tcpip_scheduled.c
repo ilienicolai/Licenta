@@ -235,10 +235,26 @@ main(int argc, char** argv)
     s_in.sin_addr.s_addr = inet_addr(config.remote_hostname);
     s_in.sin_port = htons(config.remote_port);
 
-    if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) != 0) {
-        fprintf(stderr, "main: Connection with the sender failed.\n");
-        exit(1);
-    } else {
+    {
+        int connected = 0;
+        int retries = 30;
+        while (retries-- > 0) {
+            if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) == 0) {
+                connected = 1;
+                break;
+            }
+            fprintf(stderr, "main: Connection to sender failed, retrying in 1s... (%d left)\n", retries);
+            sleep(1);
+            /* re-create socket for next attempt */
+            close(s);
+            s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s < 0) { fprintf(stderr, "main: socket() failed.\n"); exit(1); }
+            setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+        }
+        if (!connected) {
+            fprintf(stderr, "main: Connection with the sender failed after all retries.\n");
+            exit(1);
+        }
         fprintf(stdout, "main: Connected to the sender.\n");
     }
 
