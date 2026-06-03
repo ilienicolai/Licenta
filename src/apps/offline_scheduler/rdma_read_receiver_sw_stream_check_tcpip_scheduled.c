@@ -70,11 +70,17 @@ parse_opt(int key, char *arg, struct argp_state *state)
         case 0: // <local-ip-address>
             cfg->local_hostname = strdup(arg);
             break;
-    case 1: { // <scheduler-ip>
+        case 1: { // <local-port>
+            long p = strtol(arg, &end, 0);
+            if (end == arg) argp_error(state, "'%s' is not a number", arg);
+            cfg->local_port = (int)p;
+            break;
+        }
+        case 2: { // <scheduler-ip>
             cfg->remote_hostname = strdup(arg);
             break;
         }
-        case 2: { // <scheduler-port>
+        case 3: { // <scheduler-port>
             long p = strtol(arg, &end, 0);
             if (end == arg) argp_error(state, "'%s' is not a number", arg);
             cfg->remote_port = (int)p;
@@ -87,7 +93,7 @@ parse_opt(int key, char *arg, struct argp_state *state)
         break;
 
     case ARGP_KEY_END:
-        if (state->arg_num != 3) argp_usage(state);
+        if (state->arg_num != 4) argp_usage(state);
         break;
 
     default:
@@ -98,7 +104,7 @@ parse_opt(int key, char *arg, struct argp_state *state)
 }
 
 /* A description of the arguments we accept. */
-static char args_doc[] = "<local-ip-address> <scheduler-ip> <scheduler-port>";
+static char args_doc[] = "<local-ip-address> <local-port> <scheduler-ip> <scheduler-port>";
 
 /* Program documentation. */
 static char doc[] = "RDMA receiver (scheduled): waits for scheduler assignment then performs RDMA READ";
@@ -183,9 +189,10 @@ main(int argc, char** argv)
             exit(1);
         }
 
-        /* identify ourselves */
+        /* identify ourselves by IP and port */
         char ident[128];
-        snprintf(ident, sizeof(ident), "RECEIVER %s\n", config.local_hostname);
+        snprintf(ident, sizeof(ident), "RECEIVER %s %d\n",
+                 config.local_hostname, config.local_port);
         write(sched_fd, ident, strlen(ident));
 
         /* receive assignment */

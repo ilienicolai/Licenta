@@ -173,8 +173,10 @@ static long long hungarian_solve(int n, int cost[][MAX_NODES], int assign[])
 int main(int argc, char *argv[])
 {
     const char *input_file = "input.txt";
-    if (argc >= 2)
-        input_file = argv[1];
+    uint16_t scheduler_port = 53103;   /* port receivers connect to; must be open in firewall */
+
+    if (argc >= 2) input_file   = argv[1];
+    if (argc >= 3) scheduler_port = (uint16_t)atoi(argv[2]);
 
     /* --- parse input --- */
     Graph g;
@@ -289,9 +291,9 @@ int main(int argc, char *argv[])
     /* Step 2: receivers connect TO the scheduler to pick up their assignment.
      *
      * Build a lookup table: client_ip -> CONNECT_TO message.
-     * Then listen on SCHEDULER_PORT and serve each incoming receiver connection.
+     * Then listen on scheduler_port and serve each incoming receiver connection.
      */
-    const uint16_t SCHEDULER_PORT = 52000;
+    const uint16_t SCHEDULER_PORT = scheduler_port;
 
     /* build assignment messages indexed by client */
     char conn_msg[MAX_NODES][128];
@@ -351,16 +353,19 @@ int main(int argc, char *argv[])
         read(conn, buf, sizeof(buf) - 1);
 
         char recv_ip[64];
-        if (sscanf(buf, "RECEIVER %63s", recv_ip) != 1) {
+        int  recv_port;
+        if (sscanf(buf, "RECEIVER %63s %d", recv_ip, &recv_port) != 2) {
             fprintf(stderr, "  Unexpected message from receiver: '%s'\n", buf);
             close(conn);
             continue;
         }
 
-        /* find matching client by IP */
+        /* find matching client by IP and port */
         int ci = -1;
         for (int i = 0; i < nc; i++) {
-            if (has_assignment[i] && strcmp(g.clients[i].ip, recv_ip) == 0) {
+            if (has_assignment[i] &&
+                strcmp(g.clients[i].ip, recv_ip) == 0 &&
+                g.clients[i].port == (uint16_t)recv_port) {
                 ci = i;
                 break;
             }
@@ -373,8 +378,8 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        printf("  -> Receiver %-6s (%s)  :  %s",
-               g.clients[ci].name, recv_ip, conn_msg[ci]);
+        printf("  -> Receiver %-6s (%s:%d)  :  %s",
+               g.clients[ci].name, recv_ip, recv_port, conn_msg[ci]);
 
         size_t len = strlen(conn_msg[ci]);
         write(conn, conn_msg[ci], len);
