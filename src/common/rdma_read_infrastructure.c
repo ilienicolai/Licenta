@@ -1338,7 +1338,7 @@ rdma_read_consume_check_producer_thread(void *arg)
          * Bandwidth = chunk_size / (delta of wall_ns between consecutive t1). */
         timestamp_ns_thread_cpu_now = get_current_timestamp_ns_thread_cpu();
         debug_print("t1:%d:%ld\n", thread_args->client_id, timestamp_ns);
-        printf("t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
+        fprintf(stdout, "t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
                timestamp_ns_thread_cpu_now - timestamp_ns_thread_cpu_start, chunk_size);
 
         fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu completed\n", cycle);
