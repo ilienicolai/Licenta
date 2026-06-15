@@ -367,6 +367,11 @@ rdma_read_producer_thread(void *arg)
     int paused = 0;
     unsigned long cycle = 0;
 
+    /* Bandwidth-measurement timing — same convention as the check variant. */
+    long int timestamp_ns, timestamp_ms;
+    long int timestamp_ns_thread_cpu_start, timestamp_ns_thread_cpu_now;
+    unsigned long chunk_size = total_reads * thread_args->message_size;
+
     full_queue_count = total_reads / RDMA_MAX_SEND_WR;
     remainder_queue_size = total_reads % RDMA_MAX_SEND_WR;
     
@@ -377,7 +382,12 @@ rdma_read_producer_thread(void *arg)
     while (1) {
         // fprintf(stdout, "(RDMA_READ_PRODUCER) Starting cycle %lu\n", cycle);
         reads_completed = 0;
-        
+
+        /* Capture cycle-start timestamps */
+        timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+        timestamp_ms = timestamp_ns / 1E6;
+        timestamp_ns_thread_cpu_start = get_current_timestamp_ns_thread_cpu();
+
         // Process full batches
         for (j = 0; j < full_queue_count; j++) {
             // Check backpressure before posting new batch
@@ -393,6 +403,9 @@ rdma_read_producer_thread(void *arg)
                     paused = 1;
                 }
                 pthread_mutex_unlock(&(thread_args->cond_lock));
+                timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+                timestamp_ms = timestamp_ns / 1E6;
+                fprintf(stdout, "s1:%d:%ld:%ld\n", thread_args->client_id, timestamp_ns, timestamp_ms);
                 usleep(10000); // Sleep 10ms before checking again
                 pthread_mutex_lock(&(thread_args->cond_lock));
                 used_size = thread_args->used_size;
@@ -509,6 +522,9 @@ rdma_read_producer_thread(void *arg)
                 paused = 1;
             }
             pthread_mutex_unlock(&(thread_args->cond_lock));
+            timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+            timestamp_ms = timestamp_ns / 1E6;
+            fprintf(stdout, "s1:%d:%ld:%ld\n", thread_args->client_id, timestamp_ns, timestamp_ms);
             usleep(10000);
             pthread_mutex_lock(&(thread_args->cond_lock));
             used_size = thread_args->used_size;
@@ -607,10 +623,17 @@ rdma_read_producer_thread(void *arg)
         }
 
         // fprintf(stdout, "(RDMA_READ_PRODUCER) Cycle %lu completed: %lu reads\n", cycle, reads_completed);
+
+        /* Emit t1 bandwidth sample — same format as the check variant */
+        timestamp_ns_thread_cpu_now = get_current_timestamp_ns_thread_cpu();
+        timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+        debug_print("t1:%d:%ld\n", thread_args->client_id, timestamp_ns);
+        fprintf(stdout, "t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
+                timestamp_ns_thread_cpu_now - timestamp_ns_thread_cpu_start, chunk_size);
+
         cycle++;
-        
-        // Small delay between cycles to avoid overwhelming the system
-        usleep(100000); // 100ms delay between cycles
+        /* No artificial inter-cycle throttle */
+        // usleep(100000); // 100ms delay between cycles
     }
 
     // This code is unreachable in continuous mode, but kept for completeness
@@ -736,6 +759,7 @@ rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, un
     thread_args->worker_count = worker_count;
     thread_args->worker_id = 0;
     thread_args->got_data = 0;
+    thread_args->client_id = 0;
 
     bzero(thread_args->received_size_fifo, RECEIVED_FIFO_SIZE * sizeof(unsigned int));
     thread_args->fifo_size = RECEIVED_FIFO_SIZE;
