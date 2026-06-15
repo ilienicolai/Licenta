@@ -9,8 +9,6 @@ static struct argp_option options[] = {
     {"ib-gid-index", 'i', "IBGIDX", 0, "IB GID index (e.g. 5)"},
     {"message-count", 'M', "MCOUNT", 0, "RDMA message count to be received"},
     {"message-size", 'S', "MSIZE", 0, "RDMA message size to be received"},
-    {"buffer-size", 'B', "BSIZE", 0, "Size of the memory buffer which will store the received RDMA messages"},
-    {"mem-offset", 'O', "RSOFF", 0, "Offset in the remote memory from where the RDMA writes will start"},
     { 0 }
 };
 
@@ -44,20 +42,6 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'S':
         *(cfg->message_size) = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
-        break;
-
-    case 'B':
-        *(cfg->buffer_size) = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
-        break;
-
-    case 'O':
-        *(cfg->mem_offset) = strtol(arg, &end, 0);
         if (end == arg) {
             argp_error(state, "'%s' is not a number", arg);
         }
@@ -150,93 +134,38 @@ main(int argc, char** argv)
     }
     fprintf(stdout, "(RDMA_SENDER) local RDMA metadata: %s\n", *local_sender_rdma_metadata);
 
-    // establish TCP/IP connection
-    int s, c, len, flag = 1;
-    struct sockaddr_in s_in, c_in;
+    fprintf(stdout, "(RDMA_SENDER) [FIRST] remote RDMA metadata: ");
 
-    if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        fprintf(stderr, "main: Socket initialization failed.\n");
-        exit(1);
-    }
-
-    if (-1 == setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag))) {  
-        fprintf(stderr, "main: setsockopt SO_REUSEADDR failed.\n");
-        exit(1);
-    }
-
-    if (-1 == setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag))) {  
-        fprintf(stderr, "main: setsockopt TCP_NODELAY failed.\n");
-        exit(1);
-    }
-
-    bzero(&s_in, sizeof(s_in));
-    s_in.sin_family = AF_INET;
-    s_in.sin_addr.s_addr=inet_addr(config.local_hostname);
-    s_in.sin_port = htons(config.local_port);
-
-    // bind newly created socket to given IP
-    if ((bind(s, (struct sockaddr *)&s_in, sizeof(s_in))) != 0) {
-        fprintf(stderr, "main: Socket bind failed.\n");
-        exit(1);
-    } else {
-        fprintf(stdout, "main: Socket successfully bound.\n");
-    }
-        
-    // now server is ready to listen
-    if ((listen(s, 5)) != 0) {
-        fprintf(stderr, "main: Listen failed.\n");
-        exit(1);
-    } else {
-        fprintf(stdout, "main: Server listening.\n");
-    }
-            
-    len = sizeof(c_in);
-    
-    // accept the data from client
-    c = accept(s, (struct sockaddr *)&c_in, &len);
-    if (c < 0) {
-        fprintf(stderr, "main: Server accept failed.\n");
-        exit(1);
-    } else {
-        fprintf(stdout, "main: Server accepted client.\n");
-    }
-        
-    // exchange data
     if (config.function == RDMA_WRITE) {
-        remote_receiver_rdma_metadata = (char *)malloc(78);
-        memset(remote_receiver_rdma_metadata, 0, 78);
+        // 78 characters for the string + 1 character for the new line, otherwise the getchar() misbehaves
+        remote_receiver_rdma_metadata = (char *)malloc(79);
+        memset(remote_receiver_rdma_metadata, 0, 79);
 
-        read(c, remote_receiver_rdma_metadata, 78);
-        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
+        fgets(remote_receiver_rdma_metadata, 79, stdin);
+        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s\n", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
         wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
     } else {
-        remote_receiver_rdma_metadata = (char *)malloc(52);
-        memset(remote_receiver_rdma_metadata, 0, 52);
+        // 52 characters for the string + 1 character for the new line, otherwise the getchar() misbehaves
+        remote_receiver_rdma_metadata = (char *)malloc(53);
+        memset(remote_receiver_rdma_metadata, 0, 53);
 
-        read(c, remote_receiver_rdma_metadata, 52);
-        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
+        fgets(remote_receiver_rdma_metadata, 53, stdin);
+        sscanf(remote_receiver_rdma_metadata, "%0lx:%0lx:%0lx:%s\n", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
         wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
     }
 
-    fprintf(stdout, "(RDMA_SENDER) [FIRST] remote RDMA metadata: %s\n", remote_receiver_rdma_metadata);
+    fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
+    getchar();
 
-    write(c, *local_sender_rdma_metadata, 52);
-
-    // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
-    // getchar();
-
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
         fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
         exit(1);
 	}
 
-    if (rdma_post_send_mt_stream(&c, config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.buffer_size, config.mem_offset, config.remote_count) < 0) {
+    if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
         fprintf(stderr, "main: Failed to post writes.\n");
         exit(1);
     }
-
-    // char buf[32];
-    // write(s, "DONE", 32);
 
 	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");

@@ -150,53 +150,22 @@ main(int argc, char** argv)
     }
     fprintf(stdout, "(RDMA_RECEIVER) local RDMA metadata: %s\n", *local_receiver_rdma_metadata);
 
-    // establish TCP/IP connection
-    int s;
-    struct sockaddr_in s_in;
+    fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: ");
 
-    if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        fprintf(stderr, "main: Socket initialization failed.\n");
-        exit(1);
-    }
+    // 52 characters for the string + 1 character for the new line, otherwise the getchar() misbehaves
+    remote_sender_rdma_metadata = (char *)malloc(53);
+    memset(remote_sender_rdma_metadata, 0, 53);
 
-    bzero(&s_in, sizeof(s_in));
-    s_in.sin_family = AF_INET;
-    s_in.sin_addr.s_addr=inet_addr(config.remote_hostname);
-    s_in.sin_port = htons(config.remote_port);
-
-    // connect the client socket to server socket
-    if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) != 0) {
-        fprintf(stderr, "main: Connection with the server failed.\n");
-        exit(1);
-    } else {
-        fprintf(stdout, "main: Connected to the server.\n");
-    }
-
-    // exchange metadata
-    if (config.function == RDMA_WRITE) {
-        write(s, *local_receiver_rdma_metadata, 78);
-    } else {
-        write(s, *local_receiver_rdma_metadata, 52);
-    }
-
-    remote_sender_rdma_metadata = (char *)malloc(52);
-    memset(remote_sender_rdma_metadata, 0, 52);
-
-    read(s, remote_sender_rdma_metadata, 52);
-    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
+    fgets(remote_sender_rdma_metadata, 53, stdin);
+    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%s\n", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
     wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
 
-    fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: %s\n", remote_sender_rdma_metadata);
-
-    fprintf(stdout, "(RDMA_RECEIVER) [FOURTH-bis] [Wait a little and then press ENTER to check the received data... (BEFORE changing the QP state)]\n");
-    getchar();
-
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}
 
-    fprintf(stdout, "(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data... (AFTER changing the QP state)]\n");
+    fprintf(stdout, "(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data...]\n");
     getchar();
 
     // Print data in the reserved memory at the end of the write

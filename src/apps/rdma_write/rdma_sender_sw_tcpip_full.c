@@ -9,6 +9,7 @@ static struct argp_option options[] = {
     {"ib-gid-index", 'i', "IBGIDX", 0, "IB GID index (e.g. 5)"},
     {"message-count", 'M', "MCOUNT", 0, "RDMA message count to be received"},
     {"message-size", 'S', "MSIZE", 0, "RDMA message size to be received"},
+    {"buffer-size", 'B', "BSIZE", 0, "Size of the memory buffer which will store the received RDMA messages"},
     { 0 }
 };
 
@@ -42,6 +43,13 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'S':
         *(cfg->message_size) = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
+    case 'B':
+        *(cfg->buffer_size) = strtol(arg, &end, 0);
         if (end == arg) {
             argp_error(state, "'%s' is not a number", arg);
         }
@@ -148,6 +156,11 @@ main(int argc, char** argv)
         exit(1);
     }
 
+    if (-1 == setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag))) {  
+        fprintf(stderr, "main: setsockopt TCP_NODELAY failed.\n");
+        exit(1);
+    }
+
     bzero(&s_in, sizeof(s_in));
     s_in.sin_family = AF_INET;
     s_in.sin_addr.s_addr=inet_addr(config.local_hostname);
@@ -174,10 +187,10 @@ main(int argc, char** argv)
     // accept the data from client
     c = accept(s, (struct sockaddr *)&c_in, &len);
     if (c < 0) {
-        fprintf(stderr, "main: Server acccept failed.\n");
+        fprintf(stderr, "main: Server accept failed.\n");
         exit(1);
     } else {
-        fprintf(stdout, "main: Server acccepted client.\n");
+        fprintf(stdout, "main: Server accepted client.\n");
     }
         
     // exchange data
@@ -201,18 +214,28 @@ main(int argc, char** argv)
 
     write(c, *local_sender_rdma_metadata, 52);
 
-    fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
-    getchar();
+    // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
+    // getchar();
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
         fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
         exit(1);
 	}
 
-    if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
+    char buf[32];
+    do {
+        bzero(buf, 32);
+        read(c, buf, 32);
+    } while (strcmp(buf, "GO") != 0);
+
+    // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
+    if (rdma_post_send_mt(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
         fprintf(stderr, "main: Failed to post writes.\n");
         exit(1);
     }
+
+    // char buf[32];
+    write(c, "DONE", 32);
 
 	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");

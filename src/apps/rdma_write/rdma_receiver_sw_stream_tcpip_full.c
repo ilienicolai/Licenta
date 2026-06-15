@@ -10,6 +10,7 @@ static struct argp_option options[] = {
     {"worker-count", 'w', "WORKERS", 0, "Number of worker threads used for reading incoming data"},
     {"ib-device", 'd', "IBDEV", 0, "IB device (e.g. mlx5_0)"},
     {"ib-gid-index", 'i', "IBGIDX", 0, "IB GID index (e.g. 5)"},
+    {"message-count", 'M', "MCOUNT", 0, "RDMA message count to be received"},
     {"message-size", 'S', "MSIZE", 0, "RDMA message size to be received"},
     {"buffer-size", 'B', "BSIZE", 0, "Size of the memory buffer which will store the received RDMA messages"},
     {"backpressure-threshold-up", 's', "UPTHR", 0, "Threshold(%)) of buffer being in use for enabling backpresure"},
@@ -40,6 +41,13 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'i':
         cfg->gidx = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
+    case 'M':
+        *(cfg->message_count) = strtol(arg, &end, 0);
         if (end == arg) {
             argp_error(state, "'%s' is not a number", arg);
         }
@@ -151,7 +159,7 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     *(config->remote_endpoint) = (struct rdma_endpoint *)malloc(sizeof(struct rdma_endpoint));
 
     config->message_count = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
-    *(config->message_count) = 1;
+    *(config->message_count) = 10;
     config->message_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->message_size) = 1024;
     config->buffer_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
@@ -229,7 +237,7 @@ main(int argc, char** argv)
 
     printf("rdma_receiver_sw_stream_tcpiop_full 2: buffer addr: %d\n", config.rdma_ctx->buf);
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}
@@ -239,7 +247,7 @@ main(int argc, char** argv)
     write(s, "GO", 32);
     printf("rdma_receiver_sw_stream_tcpiop_full 4: GO\n");
 
-    if (rdma_consume_tstream(s, backpressure_threshold_up, backpressure_threshold_down, config.rdma_ctx, config.message_count, config.message_size, config.buffer_size, config.mem_offset, config.worker_count) < 0) {
+    if (rdma_consume(s, backpressure_threshold_up, backpressure_threshold_down, config.rdma_ctx, config.message_count, config.message_size, config.buffer_size, config.mem_offset, config.worker_count) < 0) {
         fprintf(stderr, "main: Failed to consume incoming data.\n");
         exit(1);
     }

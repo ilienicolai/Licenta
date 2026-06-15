@@ -9,6 +9,7 @@ static struct argp_option options[] = {
     {"ib-gid-index", 'i', "IBGIDX", 0, "IB GID index (e.g. 5)"},
     {"message-count", 'M', "MCOUNT", 0, "RDMA message count to be received"},
     {"message-size", 'S', "MSIZE", 0, "RDMA message size to be received"},
+    {"buffer-size", 'B', "BSIZE", 0, "Size of the memory buffer which will store the received RDMA messages"},
     { 0 }
 };
 
@@ -42,6 +43,13 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'S':
         *(cfg->message_size) = strtol(arg, &end, 0);
+        if (end == arg) {
+            argp_error(state, "'%s' is not a number", arg);
+        }
+        break;
+
+    case 'B':
+        *(cfg->buffer_size) = strtol(arg, &end, 0);
         if (end == arg) {
             argp_error(state, "'%s' is not a number", arg);
         }
@@ -105,7 +113,7 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     }
 
     // set default values
-    config->function = RDMA_WRITE;
+    config->function = RDMA_READ;
 
     config->local_hostname = "";
     config->local_port = rand();
@@ -127,8 +135,11 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     *(config->message_count) = 10;
     config->message_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->message_size) = 1024;
+    // TODO: This default is less than useful. It needs to be recomputed based on the provided values for message_count and message_size.
     config->buffer_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->buffer_size) = *(config->message_count) * *(config->message_size);
+    config->mem_offset = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
+    *(config->mem_offset) = 0;
 
     // parse arguments
     argp_parse(&argp, argc, argv, 0, 0, config);
@@ -150,36 +161,79 @@ main(int argc, char** argv)
     }
     fprintf(stdout, "(RDMA_RECEIVER) local RDMA metadata: %s\n", *local_receiver_rdma_metadata);
 
-    fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: ");
+    // establish TCP/IP connection
+    int s, flag = 1;
+    struct sockaddr_in s_in;
 
-    // 52 characters for the string + 1 character for the new line, otherwise the getchar() misbehaves
-    remote_sender_rdma_metadata = (char *)malloc(53);
-    memset(remote_sender_rdma_metadata, 0, 53);
+    if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        fprintf(stderr, "main: Socket initialization failed.\n");
+        exit(1);
+    }
 
-    fgets(remote_sender_rdma_metadata, 53, stdin);
-    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%s\n", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->gid_string));
+    if (-1 == setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag))) {  
+        fprintf(stderr, "main: setsockopt TCP_NODELAY failed.\n");
+        exit(1);
+    }
+
+    bzero(&s_in, sizeof(s_in));
+    s_in.sin_family = AF_INET;
+    s_in.sin_addr.s_addr=inet_addr(config.remote_hostname);
+    s_in.sin_port = htons(config.remote_port);
+
+    // connect the client socket to server socket
+    if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) != 0) {
+        fprintf(stderr, "main: Connection with the server failed.\n");
+        exit(1);
+    } else {
+        fprintf(stdout, "main: Connected to the server.\n");
+    }
+
+    // exchange metadata
+    if (config.function == RDMA_WRITE) {
+        write(s, *local_receiver_rdma_metadata, 78);
+    } else {
+        write(s, *local_receiver_rdma_metadata, 52);
+    }
+
+    remote_sender_rdma_metadata = (char *)malloc(78);
+    memset(remote_sender_rdma_metadata, 0, 78);
+
+    read(s, remote_sender_rdma_metadata, 78);
+    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
     wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER)) {
+    fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: %s\n", remote_sender_rdma_metadata);
+
+    // fprintf(stdout, "(RDMA_RECEIVER) [FOURTH-bis] [Wait a little and then press ENTER to check the received data... (BEFORE changing the QP state)]\n");
+    // getchar();
+
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
 	}
 
-    fprintf(stdout, "(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data...]\n");
-    getchar();
+    // write(s, "GO", 32);
 
-    // Print data in the reserved memory at the end of the write
-    int i, j;
+    // fprintf(stdout, "(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data... (AFTER changing the QP state)]\n");
+    // getchar();
 
-    printf("SUBSCRIBER: Buffer data:\n");
-    // i = config.message_count - 1;
-    for (i = 0; i < *(config.message_count); i++) {
-        for (j = 0; j < *(config.message_size); j++) {
-        printf("%d:", *(*(config.rdma_ctx->buf) + i * *(config.message_size) + j));
-        }
+    char buf[32];
+    do {
+        bzero(buf, 32);
+        read(s, buf, 32);
+    } while (strcmp(buf, "GO") != 0);
+
+    fprintf(stdout, "(RDMA_RECEIVER_CHECK) Starting integrity-checked RDMA READ operations...\n");
+
+    // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
+    if (rdma_read_method_check(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count, s) < 0) {
+        fprintf(stderr, "main: RDMA READ integrity check failed (hash mismatch detected).\n");
+        exit(1);
     }
-    printf("\nDONE\n");
-    // End of data check
+
+    fprintf(stdout, "(RDMA_RECEIVER_CHECK) RDMA READ operations completed and verified.\n");
+
+    write(s, "DONE", 32);
 
 	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");

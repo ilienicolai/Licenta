@@ -95,7 +95,7 @@ void
 cli_parse(int argc, char **argv, struct rdma_config* config)
 {
     // set default values
-    config->function = RDMA_WRITE;
+    config->function = RDMA_READ;
 
     config->local_hostname = "";
     config->local_port = 53100;
@@ -210,32 +210,51 @@ main(int argc, char** argv)
         wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
     }
 
-    fprintf(stdout, "(RDMA_SENDER) [FIRST] remote RDMA metadata: %s\n", remote_receiver_rdma_metadata);
+    fprintf(stdout, "(RDMA_SENDER_CHECK) [FIRST] remote RDMA metadata: %s\n", remote_receiver_rdma_metadata);
 
-    write(c, *local_sender_rdma_metadata, 52);
+    write(c, *local_sender_rdma_metadata, 78);
 
     // fprintf(stdout, "(RDMA_SENDER) [THIRD] [Press ENTER to connect to receiver, send data and then go check the receiver]");
     // getchar();
 
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER)) {
+	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_SENDER, config.function)) {
         fprintf(stderr, "main: Failed to connect to remote RDMA endpoint (subscriber).\n");
         exit(1);
 	}
 
-    char buf[32];
-    do {
-        bzero(buf, 32);
-        read(c, buf, 32);
-    } while (strcmp(buf, "GO") != 0);
+    char buf[128];
+    write(c, "GO", 32);
+    
+    // Hash-serving loop: handle HASH requests from receiver, then wait for DONE
+    fprintf(stdout, "(RDMA_SENDER_CHECK) Waiting for hash requests from receiver...\n");
 
-    // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-    if (rdma_post_send_mt(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
-        fprintf(stderr, "main: Failed to post writes.\n");
-        exit(1);
+    int serving = 1;
+    while (serving) {
+        bzero(buf, sizeof(buf));
+        read(c, buf, sizeof(buf));
+
+        if (strncmp(buf, "HASH:", 5) == 0) {
+            // Parse: "HASH:<batch_index>:<offset>:<length>"
+            int batch_index;
+            unsigned long offset, data_len;
+            sscanf(buf, "HASH:%d:%lu:%lu", &batch_index, &offset, &data_len);
+
+            // Compute CRC32 over the requested region of our buffer
+            uint32_t hash = rdma_crc32(*config.rdma_ctx->buf + offset, data_len);
+
+            fprintf(stdout, "(RDMA_SENDER_CHECK) Batch %d: hash request offset=%lu len=%lu -> CRC32=0x%08x\n",
+                    batch_index, offset, data_len, hash);
+
+            // Send the 4-byte hash back
+            write(c, &hash, sizeof(hash));
+
+        } else if (strcmp(buf, "DONE") == 0) {
+            fprintf(stdout, "(RDMA_SENDER_CHECK) Receiver completed all RDMA READ operations.\n");
+            serving = 0;
+        } else {
+            fprintf(stderr, "(RDMA_SENDER_CHECK) Unknown command received: '%s'\n", buf);
+        }
     }
-
-    // char buf[32];
-    write(c, "DONE", 32);
 
 	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");

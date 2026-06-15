@@ -36,13 +36,14 @@
 
 
 enum rdma_role {
-    RDMA_SENDER,
-    RDMA_RECEIVER,
+    RDMA_SENDER, // server
+    RDMA_RECEIVER, // client
 };
 
 enum rdma_function {
     RDMA_SEND,
     RDMA_WRITE,
+    RDMA_READ,
 };
 
 struct rdma_context {
@@ -162,9 +163,13 @@ int rdma_get_port_info(struct ibv_context *context, int port, struct ibv_port_at
 void wire_gid_to_gid(const char *wgid, union ibv_gid *gid);
 void gid_to_wire_gid(const union ibv_gid *gid, char wgid[]);
 
+void set_timerfd(int fd, unsigned s, unsigned ns);
+long int get_current_timestamp_ns(void);
+long int get_current_timestamp_ns_thread_cpu(void);
+
 char ** rdma_prepare(struct rdma_config *config, int role);
-struct rdma_context * rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned count, int port, int role);
-int rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rdma_endpoint **local_endpoint, struct rdma_endpoint **remote_endpoint, unsigned count, int sgid_idx, int role);
+struct rdma_context * rdma_init_ctx(struct ibv_device *ib_dev, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned count, int port, int role, int function);
+int rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rdma_endpoint **local_endpoint, struct rdma_endpoint **remote_endpoint, unsigned count, int sgid_idx, int role, int function);
 int rdma_close_ctx(struct rdma_context *ctx, unsigned count);
 
 int rdma_post_send(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count);
@@ -172,5 +177,13 @@ int rdma_post_send_mt(struct rdma_context *ctx, struct rdma_endpoint **remote_en
 int rdma_post_send_mt_stream(int *control_socket_list, struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned count);
 int rdma_consume(int control_socket, unsigned int backpressure_threshold_up, unsigned int backpressure_threshold_down, struct rdma_context *ctx, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned worker_count);
 int rdma_consume_tstream(int control_socket, unsigned int backpressure_threshold_up, unsigned int backpressure_threshold_down, struct rdma_context *ctx, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned worker_count);
+
+int rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count, int control_socket);
+int rdma_read_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count);
+int rdma_read_stream_method(struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *mem_offset, unsigned count);
+int rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, unsigned int backpressure_threshold_down, struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned worker_count);
+int rdma_read_consume_check(int control_socket, unsigned int backpressure_threshold_up, unsigned int backpressure_threshold_down, struct rdma_context *ctx, struct rdma_endpoint **remote_endpoint, unsigned long *message_count, unsigned long *message_size, unsigned long *buffer_size, unsigned long *mem_offset, unsigned worker_count);
+
+uint32_t rdma_crc32(const void *data, size_t length);
 
 #endif /* RDMA_INFRASTRUCTURE_H */
