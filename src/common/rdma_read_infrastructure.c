@@ -370,12 +370,12 @@ rdma_read_producer_thread(void *arg)
     full_queue_count = total_reads / RDMA_MAX_SEND_WR;
     remainder_queue_size = total_reads % RDMA_MAX_SEND_WR;
     
-    fprintf(stdout, "(RDMA_READ_PRODUCER) Starting continuous read mode with %lu reads per cycle, %d full batches, %d remainder\n", 
-            total_reads, full_queue_count, remainder_queue_size);
+    // fprintf(stdout, "(RDMA_READ_PRODUCER) Starting continuous read mode with %lu reads per cycle, %d full batches, %d remainder\n",
+    //         total_reads, full_queue_count, remainder_queue_size);
 
     // Continuous loop - keep reading forever
     while (1) {
-        fprintf(stdout, "(RDMA_READ_PRODUCER) Starting cycle %lu\n", cycle);
+        // fprintf(stdout, "(RDMA_READ_PRODUCER) Starting cycle %lu\n", cycle);
         reads_completed = 0;
         
         // Process full batches
@@ -387,8 +387,8 @@ rdma_read_producer_thread(void *arg)
             // Wait if buffer is too full
             while (used_size >= (thread_args->buffer_size * thread_args->backpressure_threshold_up / 100)) {
                 if (!paused) {
-                    fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
-                            used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
+                    // fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
+                    //         used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
                     thread_args->backpressure = 1;
                     paused = 1;
                 }
@@ -399,8 +399,8 @@ rdma_read_producer_thread(void *arg)
                 
                 // Check if we can resume
                 if (used_size < (thread_args->buffer_size * thread_args->backpressure_threshold_down / 100)) {
-                    fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
-                            used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
+                    // fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
+                    //         used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
                     thread_args->backpressure = 0;
                     paused = 0;
                     break;
@@ -503,8 +503,8 @@ rdma_read_producer_thread(void *arg)
         
         while (used_size >= (thread_args->buffer_size * thread_args->backpressure_threshold_up / 100)) {
             if (!paused) {
-                fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
-                        used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
+                // fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure activated: used=%lu, buffer=%lu, threshold=%u%%\n",
+                //         used_size, thread_args->buffer_size, thread_args->backpressure_threshold_up);
                 thread_args->backpressure = 1;
                 paused = 1;
             }
@@ -514,8 +514,8 @@ rdma_read_producer_thread(void *arg)
             used_size = thread_args->used_size;
             
             if (used_size < (thread_args->buffer_size * thread_args->backpressure_threshold_down / 100)) {
-                fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
-                        used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
+                // fprintf(stdout, "(RDMA_READ_PRODUCER) Backpressure released: used=%lu, buffer=%lu, threshold=%u%%\n",
+                //         used_size, thread_args->buffer_size, thread_args->backpressure_threshold_down);
                 thread_args->backpressure = 0;
                 paused = 0;
                 break;
@@ -606,7 +606,7 @@ rdma_read_producer_thread(void *arg)
             free(list);
         }
 
-        fprintf(stdout, "(RDMA_READ_PRODUCER) Cycle %lu completed: %lu reads\n", cycle, reads_completed);
+        // fprintf(stdout, "(RDMA_READ_PRODUCER) Cycle %lu completed: %lu reads\n", cycle, reads_completed);
         cycle++;
         
         // Small delay between cycles to avoid overwhelming the system
@@ -614,7 +614,7 @@ rdma_read_producer_thread(void *arg)
     }
 
     // This code is unreachable in continuous mode, but kept for completeness
-    fprintf(stdout, "(RDMA_READ_PRODUCER) Stopped after %lu cycles\n", cycle);
+    // fprintf(stdout, "(RDMA_READ_PRODUCER) Stopped after %lu cycles\n", cycle);
     
     // Signal all workers to finish
     pthread_mutex_lock(&(thread_args->cond_lock));
@@ -694,13 +694,13 @@ rdma_read_consumer_thread(void *arg)
             }
             pthread_mutex_unlock(&(thread_args->cond_lock));
 
-            printf("(RDMA_READ_CONSUMER) timestamp=%ld ms, used_size=%lu bytes (%.1f%%)\n", 
-                   (timestamp_ns / 1000000), used_size, (100.0 * used_size / thread_args->buffer_size));
+            // printf("(RDMA_READ_CONSUMER) timestamp=%ld ms, used_size=%lu bytes (%.1f%%)\n",
+            //        (timestamp_ns / 1000000), used_size, (100.0 * used_size / thread_args->buffer_size));
         }
     }
 
     free(devnull);
-    fprintf(stdout, "(RDMA_READ_CONSUMER) Worker %lu finished\n", local_worker_id);
+    // fprintf(stdout, "(RDMA_READ_CONSUMER) Worker %lu finished\n", local_worker_id);
     return NULL;
 }
 
@@ -746,11 +746,11 @@ rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, un
     pthread_cond_init(&(thread_args->start_work), NULL);
     pthread_barrier_init(&(thread_args->workers_done_barrier), NULL, worker_count);
 
-    fprintf(stdout, "(RDMA_READ_CONSUME) Starting with %u worker threads\n", worker_count);
-    fprintf(stdout, "(RDMA_READ_CONSUME) Buffer: %lu bytes, Messages: %lu x %lu bytes\n", 
-            *buffer_size, *message_count, *message_size);
-    fprintf(stdout, "(RDMA_READ_CONSUME) Backpressure thresholds: up=%u%%, down=%u%%\n", 
-            backpressure_threshold_up, backpressure_threshold_down);
+    // fprintf(stdout, "(RDMA_READ_CONSUME) Starting with %u worker threads\n", worker_count);
+    // fprintf(stdout, "(RDMA_READ_CONSUME) Buffer: %lu bytes, Messages: %lu x %lu bytes\n",
+    //         *buffer_size, *message_count, *message_size);
+    // fprintf(stdout, "(RDMA_READ_CONSUME) Backpressure thresholds: up=%u%%, down=%u%%\n",
+    //         backpressure_threshold_up, backpressure_threshold_down);
 
     // Start worker threads
     for (int i = 0; i < worker_count; i++) {
@@ -785,7 +785,7 @@ rdma_read_consume(int control_socket, unsigned int backpressure_threshold_up, un
     free(worker_threads);
     free(thread_args);
 
-    fprintf(stdout, "(RDMA_READ_CONSUME) All operations completed successfully\n");
+    // fprintf(stdout, "(RDMA_READ_CONSUME) All operations completed successfully\n");
 
     return 0;
 }
@@ -874,8 +874,8 @@ rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_e
 
     total = 0;
     
-    fprintf(stdout, "(RDMA_READ_CHECK) Starting integrity-checked RDMA READ: %lu messages, %lu bytes each, %d batches\n",
-            *message_count, *message_size, total_batches);
+    // fprintf(stdout, "(RDMA_READ_CHECK) Starting integrity-checked RDMA READ: %lu messages, %lu bytes each, %d batches\n",
+    //         *message_count, *message_size, total_batches);
 
     // Process all batches (full + remainder)
     for (j = 0; j < total_batches; j++) {
@@ -990,8 +990,8 @@ rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_e
             local_hash = rdma_crc32(*ctx->buf + local_offset, batch_data_len);
 
             if (local_hash == remote_hash) {
-                fprintf(stdout, "(RDMA_READ_CHECK) Batch %d/%d: CRC32 OK (0x%08x), %d messages verified\n",
-                        j + 1, total_batches, local_hash, batch_size);
+                // fprintf(stdout, "(RDMA_READ_CHECK) Batch %d/%d: CRC32 OK (0x%08x), %d messages verified\n",
+                //         j + 1, total_batches, local_hash, batch_size);
             } else {
                 fprintf(stderr, "(RDMA_READ_CHECK) Batch %d/%d: CRC32 MISMATCH! remote=0x%08x local=0x%08x, %d messages\n",
                         j + 1, total_batches, remote_hash, local_hash, batch_size);
@@ -1008,8 +1008,8 @@ rdma_read_method_check(struct rdma_context *ctx, struct rdma_endpoint **remote_e
         free(list);
     }
 
-    fprintf(stdout, "(RDMA_READ_CHECK) All operations completed: %d total reads, %d/%d batches passed integrity check\n",
-            total, total_batches - hash_mismatches, total_batches);
+    // fprintf(stdout, "(RDMA_READ_CHECK) All operations completed: %d total reads, %d/%d batches passed integrity check\n",
+    //         total, total_batches - hash_mismatches, total_batches);
 
     return hash_mismatches > 0 ? -1 : 0;
 }
@@ -1093,13 +1093,13 @@ rdma_read_consume_check_consumer_thread(void *arg)
             }
             pthread_mutex_unlock(&(thread_args->cond_lock));
 
-            printf("(RDMA_READ_CONSUME_CHECK_CONSUMER) timestamp=%ld ms, used_size=%lu bytes (%.1f%%)\n",
-                   (timestamp_ns / 1000000), used_size, (100.0 * used_size / thread_args->buffer_size));
+            // printf("(RDMA_READ_CONSUME_CHECK_CONSUMER) timestamp=%ld ms, used_size=%lu bytes (%.1f%%)\n",
+            //        (timestamp_ns / 1000000), used_size, (100.0 * used_size / thread_args->buffer_size));
         }
     }
 
     free(devnull);
-    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK_CONSUMER) Worker %u finished\n", local_worker_id);
+    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK_CONSUMER) Worker %u finished\n", local_worker_id);
     return NULL;
 }
 
@@ -1137,11 +1137,11 @@ rdma_read_consume_check_producer_thread(void *arg)
     total_batches = full_queue_count + (remainder_queue_size > 0 ? 1 : 0);
     total = 0;
 
-    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting stream+check mode: %lu messages, "
-            "%d batches per cycle\n", total_reads, total_batches);
+    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting stream+check mode: %lu messages, "
+    //         "%d batches per cycle\n", total_reads, total_batches);
 
     while (1) {
-        fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting cycle %lu\n", cycle);
+        // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting cycle %lu\n", cycle);
 
         /* Per-chunk timing start: wall-clock timestamp (since start_ts) and
          * thread-CPU baseline. CPU time naturally excludes any usleep() spent
@@ -1158,10 +1158,10 @@ rdma_read_consume_check_producer_thread(void *arg)
             used_size = thread_args->used_size;
             while (used_size >= (thread_args->buffer_size * thread_args->backpressure_threshold_up / 100)) {
                 if (!paused) {
-                    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure activated: "
-                            "used=%lu, buffer=%lu, threshold=%u%%\n",
-                            used_size, thread_args->buffer_size,
-                            thread_args->backpressure_threshold_up);
+                    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure activated: "
+                    //         "used=%lu, buffer=%lu, threshold=%u%%\n",
+                    //         used_size, thread_args->buffer_size,
+                    //         thread_args->backpressure_threshold_up);
                     thread_args->backpressure = 1;
                     paused = 1;
                 }
@@ -1174,10 +1174,10 @@ rdma_read_consume_check_producer_thread(void *arg)
                 pthread_mutex_lock(&(thread_args->cond_lock));
                 used_size = thread_args->used_size;
                 if (used_size < (thread_args->buffer_size * thread_args->backpressure_threshold_down / 100)) {
-                    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure released: "
-                            "used=%lu, buffer=%lu, threshold=%u%%\n",
-                            used_size, thread_args->buffer_size,
-                            thread_args->backpressure_threshold_down);
+                    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure released: "
+                    //         "used=%lu, buffer=%lu, threshold=%u%%\n",
+                    //         used_size, thread_args->buffer_size,
+                    //         thread_args->backpressure_threshold_down);
                     thread_args->backpressure = 0;
                     paused = 0;
                     break;
@@ -1290,9 +1290,9 @@ rdma_read_consume_check_producer_thread(void *arg)
                                                    batch_data_len,
                                                    thread_args->buffer_size);
                     if (local_hash == remote_hash) {
-                        fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu, Batch %d: "
-                                "CRC32 OK (0x%08x), %d messages verified\n",
-                                cycle, j, local_hash, batch_size);
+                        // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu, Batch %d: "
+                        //         "CRC32 OK (0x%08x), %d messages verified\n",
+                        //         cycle, j, local_hash, batch_size);
                     } else {
                         fprintf(stderr, "(RDMA_READ_CONSUME_CHECK) Cycle %lu, Batch %d: "
                                 "CRC32 MISMATCH! remote=0x%08x local=0x%08x\n",
@@ -1341,7 +1341,7 @@ rdma_read_consume_check_producer_thread(void *arg)
         fprintf(stdout, "t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
                timestamp_ns_thread_cpu_now - timestamp_ns_thread_cpu_start, chunk_size);
 
-        fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu completed\n", cycle);
+        // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu completed\n", cycle);
         cycle++;
         /* No artificial inter-cycle throttle: the producer is rate-limited by
          * the real RDMA READ completions and by backpressure when the consumer
@@ -1404,12 +1404,12 @@ rdma_read_consume_check(int control_socket,
     pthread_cond_init(&(thread_args->start_work), NULL);
     pthread_barrier_init(&(thread_args->workers_done_barrier), NULL, worker_count);
 
-    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting with %u worker threads\n",
-            worker_count);
-    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Buffer: %lu bytes, Messages: %lu x %lu bytes\n",
-            *buffer_size, *message_count, *message_size);
-    fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure thresholds: up=%u%%, down=%u%%\n",
-            backpressure_threshold_up, backpressure_threshold_down);
+    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting with %u worker threads\n",
+    //         worker_count);
+    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Buffer: %lu bytes, Messages: %lu x %lu bytes\n",
+    //         *buffer_size, *message_count, *message_size);
+    // fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Backpressure thresholds: up=%u%%, down=%u%%\n",
+    //         backpressure_threshold_up, backpressure_threshold_down);
 
     /* Start consumer worker threads (use the check-specific consumer
      * which waits on used_size == 0 instead of produce == consume) */
