@@ -33,7 +33,7 @@
 #define RDMA_MAX_RECV_WR (8192)
 #define READY 111
 #define RECEIVED_FIFO_SIZE 2048
-#define MAX_RD_ATOMIC 128
+#define MAX_RD_ATOMIC 16
 
 
 enum rdma_role {
