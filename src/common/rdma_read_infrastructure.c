@@ -1337,6 +1337,11 @@ rdma_read_consume_check_producer_thread(void *arg)
          * chunk_size - bytes pulled this cycle (message_count * message_size).
          * Bandwidth = chunk_size / (delta of wall_ns between consecutive t1). */
         timestamp_ns_thread_cpu_now = get_current_timestamp_ns_thread_cpu();
+        /* Re-capture wall clock at true cycle end.
+         * timestamp_ns may have been overwritten by s1 stall samples that fire
+         * inside the batch loop above; using it directly would give a wrong
+         * (too-small) delta and therefore a wrong (too-low) bandwidth. */
+        timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
         debug_print("t1:%d:%ld\n", thread_args->client_id, timestamp_ns);
         fprintf(stdout, "t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
                timestamp_ns_thread_cpu_now - timestamp_ns_thread_cpu_start, chunk_size);

@@ -83,12 +83,18 @@ def parse_t1(path):
     return data
 
 
-def compute_bandwidth(samples, bits=False):
+def compute_bandwidth(samples, bits=False, max_seconds=None):
     """Convert sorted (wall_ns, chunk_bytes) samples into (seconds, GB/s)."""
     xs, ys = [], []
+    # wall_ns of the very first sample is the t=0 reference
+    origin_ns = samples[0][0] if samples else 0
+    cutoff_ns = (origin_ns + max_seconds * 1e9) if max_seconds is not None else None
+
     for i in range(1, len(samples)):
         prev_ns, _ = samples[i - 1]
         cur_ns, chunk = samples[i]
+        if cutoff_ns is not None and cur_ns > cutoff_ns:
+            break
         delta_ns = cur_ns - prev_ns
         if delta_ns <= 0:
             continue
@@ -153,6 +159,8 @@ def parse_args(argv):
                    help="Custom legend labels, one per file "
                         "(e.g. --labels 'workers=1' 'workers=2' 'workers=4'). "
                         "Defaults to the filename stem.")
+    p.add_argument("--duration", type=float, default=None, metavar="SECONDS",
+                   help="Only use the first SECONDS of data from each file.")
     p.add_argument("--figsize", default="12x4", metavar="WxH",
                    help="Figure size in inches, e.g. 12x4.")
     p.add_argument("--show", action="store_true",
@@ -199,7 +207,8 @@ def main(argv=None):
         multi_client = len(data) > 1
 
         for client_id in sorted(data):
-            xs, ys = compute_bandwidth(data[client_id], bits=args.bits)
+            xs, ys = compute_bandwidth(data[client_id], bits=args.bits,
+                                       max_seconds=args.duration)
             if not xs:
                 print(f"'{path}' client {client_id}: not enough samples "
                       f"to compute bandwidth.", file=sys.stderr)
