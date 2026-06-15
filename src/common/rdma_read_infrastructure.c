@@ -1125,6 +1125,13 @@ rdma_read_consume_check_producer_thread(void *arg)
     unsigned long used_size;
     unsigned long total_reads = thread_args->message_count;
 
+    /* Bandwidth-measurement timing (mirrors the RDMA write client_thread).
+     * t1 prints one sample per chunk (cycle); s1 prints while stalled on
+     * backpressure. chunk_size is the bytes moved per cycle. */
+    long int timestamp_ns, timestamp_ms;
+    long int timestamp_ns_thread_cpu_start, timestamp_ns_thread_cpu_now;
+    unsigned long chunk_size = total_reads * thread_args->message_size;
+
     full_queue_count  = total_reads / RDMA_MAX_SEND_WR;
     remainder_queue_size = total_reads % RDMA_MAX_SEND_WR;
     total_batches = full_queue_count + (remainder_queue_size > 0 ? 1 : 0);
@@ -1135,6 +1142,13 @@ rdma_read_consume_check_producer_thread(void *arg)
 
     while (1) {
         fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Starting cycle %lu\n", cycle);
+
+        /* Per-chunk timing start: wall-clock timestamp (since start_ts) and
+         * thread-CPU baseline. CPU time naturally excludes any usleep() spent
+         * waiting on backpressure, matching the write-side measurement. */
+        timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+        timestamp_ms = timestamp_ns / 1E6;
+        timestamp_ns_thread_cpu_start = get_current_timestamp_ns_thread_cpu();
 
         for (j = 0; j < total_batches; j++) {
             batch_size = (j < full_queue_count) ? RDMA_MAX_SEND_WR : remainder_queue_size;
@@ -1152,6 +1166,10 @@ rdma_read_consume_check_producer_thread(void *arg)
                     paused = 1;
                 }
                 pthread_mutex_unlock(&(thread_args->cond_lock));
+                /* Backpressure stall sample (mirrors RDMA write s1 print) */
+                timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
+                timestamp_ms = timestamp_ns / 1E6;
+                printf("s1:%d:%ld:%ld\n", thread_args->client_id, timestamp_ns, timestamp_ms);
                 usleep(10000);
                 pthread_mutex_lock(&(thread_args->cond_lock));
                 used_size = thread_args->used_size;
@@ -1312,9 +1330,24 @@ rdma_read_consume_check_producer_thread(void *arg)
             free(list);
         }
 
+        /* Per-chunk bandwidth sample (mirrors RDMA write t1 print):
+         *   t1:client_id:wall_ns:cpu_delta_ns:chunk_size
+         * wall_ns    - wall-clock ns since start_ts (captured at cycle start)
+         * cpu_delta  - thread CPU ns spent issuing/polling this cycle's reads
+         * chunk_size - bytes pulled this cycle (message_count * message_size).
+         * Bandwidth = chunk_size / (delta of wall_ns between consecutive t1). */
+        timestamp_ns_thread_cpu_now = get_current_timestamp_ns_thread_cpu();
+        debug_print("t1:%d:%ld\n", thread_args->client_id, timestamp_ns);
+        printf("t1:%d:%ld:%ld:%lu\n", thread_args->client_id, timestamp_ns,
+               timestamp_ns_thread_cpu_now - timestamp_ns_thread_cpu_start, chunk_size);
+
         fprintf(stdout, "(RDMA_READ_CONSUME_CHECK) Cycle %lu completed\n", cycle);
         cycle++;
-        usleep(100000);
+        /* No artificial inter-cycle throttle: the producer is rate-limited by
+         * the real RDMA READ completions and by backpressure when the consumer
+         * falls behind. Sleeping here would cap measured bandwidth at
+         * chunk_size / sleep, defeating the throughput measurement. */
+        /* usleep(100000); */
     }
 
     /* Unreachable in continuous mode */
@@ -1360,6 +1393,7 @@ rdma_read_consume_check(int control_socket,
     thread_args->worker_count = worker_count;
     thread_args->worker_id   = 0;
     thread_args->got_data    = 0;
+    thread_args->client_id   = 0;
 
     bzero(thread_args->received_size_fifo, RECEIVED_FIFO_SIZE * sizeof(unsigned int));
     thread_args->fifo_size = RECEIVED_FIFO_SIZE;
