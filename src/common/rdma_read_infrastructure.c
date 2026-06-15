@@ -1169,7 +1169,7 @@ rdma_read_consume_check_producer_thread(void *arg)
                 /* Backpressure stall sample (mirrors RDMA write s1 print) */
                 timestamp_ns = get_current_timestamp_ns() - thread_args->start_ts;
                 timestamp_ms = timestamp_ns / 1E6;
-                printf("s1:%d:%ld:%ld\n", thread_args->client_id, timestamp_ns, timestamp_ms);
+                fprintf(stdout, "s1:%d:%ld:%ld\n", thread_args->client_id, timestamp_ns, timestamp_ms);
                 usleep(10000);
                 pthread_mutex_lock(&(thread_args->cond_lock));
                 used_size = thread_args->used_size;
