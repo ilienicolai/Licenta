@@ -8,8 +8,6 @@
 #define MAX_NODES     128
 #define INF           1000000000
 
-/* ---------- data structures ---------- */
-
 typedef struct {
     char     name[MAX_NAME_LEN];
     char     ip[MAX_IP_LEN];
@@ -28,24 +26,10 @@ typedef struct {
     Server  servers[MAX_NODES];
     Client  clients[MAX_NODES];
 
-    /*
-     * cost[i][j]  = cost of assigning client i to server j.
-     * INF         = no edge between client i and server j.
-     */
-    int cost[MAX_NODES][MAX_NODES];
+    int cost[MAX_NODES][MAX_NODES];  /* INF = no edge */
 } Graph;
 
-/* ---------- function declarations ---------- */
-
-/*
- * Parse the input file and fill the Graph structure.
- * Returns 0 on success, -1 on error.
- */
 int parse_input(const char *filename, Graph *g);
-
-/*
- * Print the parsed graph for debugging.
- */
 void print_graph(const Graph *g);
 
 #endif /* UTILS_H */
