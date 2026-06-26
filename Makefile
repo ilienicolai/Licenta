@@ -2,7 +2,7 @@ CC=gcc
 O=2
 
 INCLUDES=-Isrc/common -I/usr/include/infiniband
-FLAGS=-O$(O) -g -DDEBUG=1
+FLAGS=-O$(O) -g -DDEBUG=0
 LINK_FLAGS=
 LINK_LIBRARIES=-L/usr/lib64 -libverbs -lpthread -lrt
 
