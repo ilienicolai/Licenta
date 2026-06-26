@@ -22,17 +22,13 @@ static struct argp_option options[] = {
 static error_t
 parse_opt(int key, char *arg, struct argp_state *state)
 {
-    /* Get the input argument from argp_parse, which we
-        know is a pointer to our config structure. */
     struct rdma_config *cfg = state->input;
     char* end;
 
     switch (key) {
     case 'w':
         cfg->worker_count = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 'd':
@@ -41,44 +37,32 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
     case 'i':
         cfg->gidx = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 'M':
         *(cfg->message_count) = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 'S':
         *(cfg->message_size) = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 'B':
         *(cfg->buffer_size) = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 's':
         backpressure_threshold_up = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case 'j':
         backpressure_threshold_down = strtol(arg, &end, 0);
-        if (end == arg) {
-            argp_error(state, "'%s' is not a number", arg);
-        }
+        if (end == arg) argp_error(state, "'%s' is not a number", arg);
         break;
 
     case ARGP_KEY_ARG:
@@ -86,30 +70,20 @@ parse_opt(int key, char *arg, struct argp_state *state)
         case 0: // <local-ip-address>
             cfg->local_hostname = strdup(arg);
             break;
-
-        case 1: // <remote-ip-address>
-            cfg->remote_hostname = strdup(arg);
+        case 1: { // <coord-port>
+            long p = strtol(arg, &end, 0);
+            if (end == arg) argp_error(state, "'%s' is not a number", arg);
+            cfg->local_port = (int)p;
             break;
-
-        case 2: // <remote-tcp-port>
-            cfg->remote_port = strtol(arg, &end, 0);
-            if (end == arg) {
-                argp_error(state, "'%s' is not a number", arg);
-            }
-            break;
-
+        }
         default:
-            /* Too many arguments. */
             argp_usage(state);
             break;
         }
         break;
 
     case ARGP_KEY_END:
-        if (state->arg_num != 3) {
-            /* Not enough arguments. */
-            argp_usage(state);
-        }
+        if (state->arg_num != 2) argp_usage(state);
         break;
 
     default:
@@ -120,10 +94,10 @@ parse_opt(int key, char *arg, struct argp_state *state)
 }
 
 /* A description of the arguments we accept. */
-static char args_doc[] = "<local-ip-address> <remote-ip-address> <remote-tcp-port>";
+static char args_doc[] = "<local-ip-address> <coord-port>";
 
 /* Program documentation. */
-static char doc[] = "RDMA receiver with manual metadata exchange";
+static char doc[] = "RDMA receiver (scheduled): waits for scheduler assignment then performs RDMA READ";
 
 /* Our argp parser. */
 static struct argp argp = { options, parse_opt, args_doc, doc };
@@ -142,9 +116,9 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     config->function = RDMA_READ;
 
     config->local_hostname = "";
-    config->local_port = rand();
+    config->local_port = 53100;   /* overridden by <coord-port> CLI arg */
     config->remote_hostname = "";
-    config->remote_port = 53100;
+    config->remote_port = 0;
 
     config->worker_count = 1;
     config->ib_devname = "mlx5_0";
@@ -162,7 +136,6 @@ cli_parse(int argc, char **argv, struct rdma_config* config)
     *(config->message_count) = 10;
     config->message_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->message_size) = 1024;
-    // TODO: This default is less than useful. It needs to be recomputed based on the provided values for message_count and message_size.
     config->buffer_size = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
     *(config->buffer_size) = *(config->message_count) * *(config->message_size);
     config->mem_offset = (unsigned long *)calloc(config->remote_count, sizeof(unsigned long));
@@ -178,8 +151,55 @@ main(int argc, char** argv)
     char **local_receiver_rdma_metadata;
     char *remote_sender_rdma_metadata;
 
-
     cli_parse(argc, argv, &config);
+
+    /* wait for scheduler: listen on <coord-port> for "CONNECT_TO <ip> <port>" */
+    {
+        int flag = 1;
+        int sched_srv = socket(AF_INET, SOCK_STREAM, 0);
+        if (sched_srv < 0) { perror("socket"); exit(1); }
+        setsockopt(sched_srv, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+
+        struct sockaddr_in sa;
+        bzero(&sa, sizeof(sa));
+        sa.sin_family      = AF_INET;
+        sa.sin_addr.s_addr = inet_addr(config.local_hostname);
+        sa.sin_port        = htons(config.local_port);
+
+        if (bind(sched_srv, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
+            fprintf(stderr, "main: bind on coord port %d failed.\n", config.local_port);
+            exit(1);
+        }
+        if (listen(sched_srv, 1) != 0) {
+            fprintf(stderr, "main: listen on coord port failed.\n");
+            exit(1);
+        }
+
+        fprintf(stdout, "(RECEIVER) Waiting for scheduler on %s:%d ...\n",
+                config.local_hostname, config.local_port);
+
+        int sched_conn = accept(sched_srv, NULL, NULL);
+        if (sched_conn < 0) { perror("accept"); exit(1); }
+
+        char msg[128];
+        memset(msg, 0, sizeof(msg));
+        read(sched_conn, msg, sizeof(msg) - 1);
+        close(sched_conn);
+        close(sched_srv);
+
+        char sender_ip[64];
+        int  rdma_port;
+        if (sscanf(msg, "CONNECT_TO %63s %d", sender_ip, &rdma_port) != 2) {
+            fprintf(stderr, "main: unexpected scheduler message: '%s'\n", msg);
+            exit(1);
+        }
+
+        config.remote_hostname = strdup(sender_ip);
+        config.remote_port     = rdma_port;
+
+        fprintf(stdout, "(RECEIVER) Scheduler assigned: connect to sender %s:%d\n",
+                sender_ip, rdma_port);
+    }
 
     local_receiver_rdma_metadata = rdma_prepare(&config, RDMA_RECEIVER);
     if (local_receiver_rdma_metadata == NULL) {
@@ -188,7 +208,7 @@ main(int argc, char** argv)
     }
     fprintf(stdout, "(RDMA_RECEIVER) local RDMA metadata: %s\n", *local_receiver_rdma_metadata);
 
-    // establish TCP/IP connection
+    /* connect to the assigned sender and exchange RDMA metadata */
     int s, flag = 1;
     struct sockaddr_in s_in;
 
@@ -197,25 +217,40 @@ main(int argc, char** argv)
         exit(1);
     }
 
-    if (-1 == setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag))) {  
+    if (-1 == setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag))) {
         fprintf(stderr, "main: setsockopt TCP_NODELAY failed.\n");
         exit(1);
     }
 
     bzero(&s_in, sizeof(s_in));
     s_in.sin_family = AF_INET;
-    s_in.sin_addr.s_addr=inet_addr(config.remote_hostname);
+    s_in.sin_addr.s_addr = inet_addr(config.remote_hostname);
     s_in.sin_port = htons(config.remote_port);
 
-    // connect the client socket to server socket
-    if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) != 0) {
-        fprintf(stderr, "main: Connection with the server failed.\n");
-        exit(1);
-    } else {
-        fprintf(stdout, "main: Connected to the server.\n");
+    {
+        int connected = 0;
+        int retries = 30;
+        while (retries-- > 0) {
+            if (connect(s, (struct sockaddr *)&s_in, sizeof(s_in)) == 0) {
+                connected = 1;
+                break;
+            }
+            fprintf(stderr, "main: Connection to sender failed, retrying in 1s... (%d left)\n", retries);
+            sleep(1);
+            /* re-create socket for next attempt */
+            close(s);
+            s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s < 0) { fprintf(stderr, "main: socket() failed.\n"); exit(1); }
+            setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+        }
+        if (!connected) {
+            fprintf(stderr, "main: Connection with the sender failed after all retries.\n");
+            exit(1);
+        }
+        fprintf(stdout, "main: Connected to the sender.\n");
     }
 
-    // exchange metadata
+    /* exchange metadata */
     if (config.function == RDMA_WRITE) {
         write(s, *local_receiver_rdma_metadata, 78);
     } else {
@@ -226,23 +261,18 @@ main(int argc, char** argv)
     memset(remote_sender_rdma_metadata, 0, 78);
 
     read(s, remote_sender_rdma_metadata, 78);
-    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s", &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn), &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey), &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
+    sscanf(remote_sender_rdma_metadata, "%0lx:%0lx:%0lx:%08x:%016lx:%s",
+           &((*(config.remote_endpoint))->lid), &((*(config.remote_endpoint))->qpn),
+           &((*(config.remote_endpoint))->psn), &((*(config.remote_endpoint))->rkey),
+           &((*(config.remote_endpoint))->addr), &((*(config.remote_endpoint))->gid_string));
     wire_gid_to_gid((*(config.remote_endpoint))->gid_string, &((*(config.remote_endpoint))->gid));
 
     fprintf(stdout, "(RDMA_RECEIVER) [SECOND] remote RDMA metadata: %s\n", remote_sender_rdma_metadata);
 
-    debug_print("(RDMA_RECEIVER) [FOURTH-bis] [Wait a little and then press ENTER to check the received data... (BEFORE changing the QP state)]\n");
-    // getchar();
-
-	if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
+    if (rdma_connect_ctx(config.rdma_ctx, 1, config.mtu, config.local_endpoint, config.remote_endpoint, config.remote_count, config.gidx, RDMA_RECEIVER, config.function)) {
         fprintf(stderr, "main:  Failed to connect to remote RDMA endpoint (provider).\n");
         exit(1);
-	}
-
-    // write(s, "GO", 32);
-
-    debug_print("(RDMA_RECEIVER) [FOURTH] [Wait a little and then press ENTER to check the received data... (AFTER changing the QP state)]\n");
-    // getchar();
+    }
 
     char buf[32];
     do {
@@ -252,7 +282,6 @@ main(int argc, char** argv)
 
     fprintf(stdout, "(RDMA_RECEIVER_CHECK) Starting integrity-checked streaming RDMA READ operations...\n");
 
-    // if (rdma_post_send(config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.mem_offset, config.remote_count) < 0) {
     if (rdma_read_consume_check(s, backpressure_threshold_up, backpressure_threshold_down, config.rdma_ctx, config.remote_endpoint, config.message_count, config.message_size, config.buffer_size, config.mem_offset, config.worker_count) < 0) {
         fprintf(stderr, "main: RDMA READ stream+check failed.\n");
         exit(1);
@@ -261,7 +290,7 @@ main(int argc, char** argv)
     /* rdma_read_consume_check runs indefinitely; unreachable below */
     fprintf(stdout, "(RDMA_RECEIVER_CHECK) RDMA READ stream+check stopped.\n");
 
-	if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
+    if (rdma_close_ctx(config.rdma_ctx, config.remote_count)) {
         fprintf(stderr, "main: Failed to clean up before exiting.\n");
-	}
+    }
 }
