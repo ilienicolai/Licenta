@@ -1,4 +1,4 @@
-/* Hungarian (Munkres) optimal assignment scheduler for RDMA sender/receiver pairs */
+/* Hungarian optimal assignment scheduler for RDMA sender/receiver pairs */
 
 #include <stdio.h>
 #include <stdlib.h>
