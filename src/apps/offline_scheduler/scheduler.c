@@ -22,6 +22,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "utils.h"
 
@@ -175,6 +176,9 @@ int main(int argc, char *argv[])
     const char *input_file = "input.txt";
     uint16_t scheduler_port = 53103;   /* port receivers connect to; must be open in firewall */
 
+    struct timespec t_start;
+    clock_gettime(CLOCK_MONOTONIC, &t_start);
+
     if (argc >= 2) input_file   = argv[1];
     if (argc >= 3) scheduler_port = (uint16_t)atoi(argv[2]);
 
@@ -299,5 +303,13 @@ int main(int argc, char *argv[])
 
     free(sq);
     free(assign);
+
+    struct timespec t_end;
+    clock_gettime(CLOCK_MONOTONIC, &t_end);
+    double elapsed_s  = (double)(t_end.tv_sec  - t_start.tv_sec)
+                      + (double)(t_end.tv_nsec - t_start.tv_nsec) / 1e9;
+    double elapsed_ms = elapsed_s * 1000.0;
+    printf("\nScheduler total time: %.6f s  (%.3f ms)\n", elapsed_s, elapsed_ms);
+
     return dist_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
