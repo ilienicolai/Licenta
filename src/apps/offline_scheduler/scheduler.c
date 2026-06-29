@@ -137,7 +137,7 @@ static long long hungarian_solve(int n, int cost[][MAX_NODES], int assign[])
 int main(int argc, char *argv[])
 {
     const char *input_file = "input.txt";
-    uint16_t scheduler_port = 53103;   /* port receivers connect to; must be open in firewall */
+    uint16_t scheduler_port = 53103;   /* port receivers connect to*/
 
     struct timespec t_start;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
