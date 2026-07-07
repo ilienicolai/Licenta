@@ -385,7 +385,7 @@ rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rd
             .path_mtu           = mtu,
             .dest_qp_num        = (*(remote_endpoint + i))->qpn,
             .rq_psn             = (*(remote_endpoint + i))->psn,
-            .max_dest_rd_atomic	= 1,
+            .max_dest_rd_atomic	= MAX_RD_ATOMIC,
             .min_rnr_timer      = 12,
             .ah_attr			= {
                 .is_global      = 0,
@@ -425,7 +425,7 @@ rdma_connect_ctx(struct rdma_context *ctx, int port, enum ibv_mtu mtu, struct rd
             attr.retry_cnt      = 7;
             attr.rnr_retry      = 6;
             attr.sq_psn         = (*(local_endpoint + i))->psn;
-            attr.max_rd_atomic  = 1;
+            attr.max_rd_atomic  = MAX_RD_ATOMIC;
 
             if (ibv_modify_qp(*(ctx->qp + i), &attr,
                     IBV_QP_STATE              |

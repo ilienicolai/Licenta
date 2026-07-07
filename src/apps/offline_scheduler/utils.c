@@ -12,12 +12,10 @@ int parse_input(const char *filename, Graph *g)
         return -1;
     }
 
-    /* Initialise the cost matrix: no edge = INF */
     for (int i = 0; i < MAX_NODES; i++)
         for (int j = 0; j < MAX_NODES; j++)
             g->cost[i][j] = INF;
 
-    /* --- read servers --- */
     if (fscanf(fp, "%d", &g->n_servers) != 1) {
         fprintf(stderr, "Error reading number of servers\n");
         fclose(fp);
@@ -34,7 +32,6 @@ int parse_input(const char *filename, Graph *g)
         }
     }
 
-    /* --- read clients --- */
     if (fscanf(fp, "%d", &g->n_clients) != 1) {
         fprintf(stderr, "Error reading number of clients\n");
         fclose(fp);
@@ -51,7 +48,6 @@ int parse_input(const char *filename, Graph *g)
         }
     }
 
-    /* --- read edges: <client_name> <server_name> <cost> --- */
     char cname[MAX_NAME_LEN], sname[MAX_NAME_LEN];
     int  cost;
     while (fscanf(fp, "%63s %63s %d", cname, sname, &cost) == 3) {

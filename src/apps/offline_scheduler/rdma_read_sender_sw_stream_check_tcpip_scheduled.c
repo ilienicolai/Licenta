@@ -125,10 +125,7 @@ main(int argc, char** argv)
 
     cli_parse(argc, argv, &config);
 
-    /* ------------------------------------------------------------------ *
-     * Phase 1: Wait for the scheduler to deliver the assignment.          *
-     *          Listen on <coord-port> for a "READY <rdma_port>\n" message.*
-     * ------------------------------------------------------------------ */
+    /* wait for scheduler: listen on <coord-port> for "READY <rdma_port>" */
     int coord_rdma_port;
     {
         int flag = 1;
@@ -174,9 +171,6 @@ main(int argc, char** argv)
                 coord_rdma_port);
     }
 
-    /* ------------------------------------------------------------------ *
-     * Phase 2: Initialise RDMA resources.                                 *
-     * ------------------------------------------------------------------ */
     local_sender_rdma_metadata = rdma_prepare(&config, RDMA_SENDER);
     if (local_sender_rdma_metadata == NULL) {
         fprintf(stderr, "main: Failed to initialize RDMA and get the sender RDMA metadata.\n");
@@ -184,10 +178,7 @@ main(int argc, char** argv)
     }
     fprintf(stdout, "(RDMA_SENDER) local RDMA metadata: %s\n", *local_sender_rdma_metadata);
 
-    /* ------------------------------------------------------------------ *
-     * Phase 3: Listen on <rdma_port> for the receiver to connect and      *
-     *          exchange RDMA metadata.                                     *
-     * ------------------------------------------------------------------ */
+    /* listen on the assigned rdma_port and exchange metadata with receiver */
     int s, c, len, flag = 1;
     struct sockaddr_in s_in, c_in;
 
